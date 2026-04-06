@@ -13,14 +13,10 @@ choose between exactly TWO states: 0 or 1.  This maze embodies that idea:
   • The path is always deterministic — one state at a time, no uncertainty.
   • The computer knows exactly where it is and must solve the maze step-by-step.
 
-Contrast this with the Quantum exhibit next to it, where the "player" can be
-in a superposition of ALL paths simultaneously until measured.
-
 Controls
 --------
-  Arrow keys / WASD  — move the player  (one direction at a time)
-  R                  — reset / new maze
-  ESC                — quit
+  On-screen D-pad buttons  — move the player
+  RESET button             — new maze
 """
 
 import sys
@@ -29,48 +25,42 @@ import numpy as np
 
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout,
-    QHBoxLayout, QLabel, QPushButton, QFrame,
+    QHBoxLayout, QLabel, QPushButton, QFrame, QGridLayout,
 )
-from PyQt6.QtCore import Qt, QTimer, QRect, QPoint
+from PyQt6.QtCore import Qt, QTimer, QRect, QSize
 from PyQt6.QtGui import (
-    QPainter, QColor, QPen, QFont, QFontDatabase,
-    QKeyEvent, QBrush, QPainterPath,
+    QPainter, QColor, QPen, QFont,
+    QKeyEvent, QBrush,
 )
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Palette — classic green-phosphor terminal
 # ─────────────────────────────────────────────────────────────────────────────
-BG_COLOR        = QColor(  8,  12,   8)   # near-black
-GRID_COLOR      = QColor( 20,  35,  20)   # very dark green grid
-WALL_COLOR      = QColor( 30, 180,  50)   # phosphor green walls
-PATH_COLOR      = QColor( 15,  60,  20)   # dim trail
-PLAYER_COLOR    = QColor( 80, 255, 100)   # bright green player
-GOAL_COLOR      = QColor(255, 210,   0)   # gold exit
-VISITED_COLOR   = QColor( 18,  50,  22)   # breadcrumb
-TEXT_COLOR      = QColor( 60, 220,  80)
-DIM_TEXT        = QColor( 30,  80,  40)
-ACCENT_COLOR    = QColor( 40, 220,  60)
+BG_COLOR      = QColor(  8,  12,   8)
+GRID_COLOR    = QColor( 20,  35,  20)
+WALL_COLOR    = QColor( 30, 180,  50)
+PLAYER_COLOR  = QColor( 80, 255, 100)
+GOAL_COLOR    = QColor(255, 210,   0)
+VISITED_COLOR = QColor( 18,  50,  22)
+TEXT_COLOR    = QColor( 60, 220,  80)
+DIM_TEXT      = QColor( 30,  80,  40)
+ACCENT_COLOR  = QColor( 40, 220,  60)
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Maze dimensions
+# Maze dimensions  (smaller than before)
 # ─────────────────────────────────────────────────────────────────────────────
-COLS, ROWS  = 19, 15      # must be odd for the recursive-backtracker
-CELL_PX     = 40          # pixels per maze cell
+COLS, ROWS = 13, 11   # odd numbers required by recursive-backtracker
+CELL_PX    = 24       # pixels per cell
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Maze generator — recursive backtracker (perfect maze, always solvable)
+# Maze generator
 # ─────────────────────────────────────────────────────────────────────────────
 
 def generate_maze(cols: int, rows: int) -> np.ndarray:
-    """
-    Returns a boolean grid where True = wall, False = open passage.
-    Grid size is (2*rows+1) × (2*cols+1) — walls are at even indices.
-    """
     grid_h = 2 * rows + 1
     grid_w = 2 * cols + 1
-    maze = np.ones((grid_h, grid_w), dtype=bool)   # start all walls
-
+    maze   = np.ones((grid_h, grid_w), dtype=bool)
     visited = np.zeros((rows, cols), dtype=bool)
 
     def cell_to_grid(r, c):
@@ -79,24 +69,19 @@ def generate_maze(cols: int, rows: int) -> np.ndarray:
     def carve(r, c):
         visited[r, c] = True
         gr, gc = cell_to_grid(r, c)
-        maze[gr, gc] = False                        # open the cell itself
-
-        directions = [(0, 1), (0, -1), (1, 0), (-1, 0)]
-        random.shuffle(directions)
-
-        for dr, dc in directions:
+        maze[gr, gc] = False
+        dirs = [(0, 1), (0, -1), (1, 0), (-1, 0)]
+        random.shuffle(dirs)
+        for dr, dc in dirs:
             nr, nc = r + dr, c + dc
             if 0 <= nr < rows and 0 <= nc < cols and not visited[nr, nc]:
-                # Remove the wall between (r,c) and (nr,nc)
                 maze[gr + dr, gc + dc] = False
                 carve(nr, nc)
 
-    # Increase Python recursion limit for large mazes
-    old_limit = sys.getrecursionlimit()
-    sys.setrecursionlimit(max(old_limit, rows * cols * 4))
+    old = sys.getrecursionlimit()
+    sys.setrecursionlimit(max(old, rows * cols * 4))
     carve(0, 0)
-    sys.setrecursionlimit(old_limit)
-
+    sys.setrecursionlimit(old)
     return maze
 
 
@@ -105,55 +90,39 @@ def generate_maze(cols: int, rows: int) -> np.ndarray:
 # ─────────────────────────────────────────────────────────────────────────────
 
 class MazeWidget(QWidget):
-    """Renders the maze and handles player movement."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self._init_maze()
-        self.blink_on   = True
-        self.move_count = 0
-        self.won        = False
 
-        # Cursor blink
+        self.blink_on = True
         self._blink_timer = QTimer(self)
         self._blink_timer.timeout.connect(self._blink)
         self._blink_timer.start(500)
 
-        # Binary rain columns (decorative background)
-        self._rain_cols  = [random.randint(0, COLS * 2) for _ in range(12)]
-        self._rain_rows  = [random.uniform(0, ROWS * 2) for _ in range(12)]
+        self._rain_cols = [random.randint(0, COLS * 2) for _ in range(8)]
+        self._rain_rows = [random.uniform(0, ROWS * 2) for _ in range(8)]
         self._rain_timer = QTimer(self)
         self._rain_timer.timeout.connect(self._tick_rain)
-        self._rain_timer.start(120)
-
-    # ── setup ──────────────────────────────────────────────────────────────
+        self._rain_timer.start(150)
 
     def _init_maze(self):
-        self.maze        = generate_maze(COLS, ROWS)
+        self.maze = generate_maze(COLS, ROWS)
         self.grid_h, self.grid_w = self.maze.shape
-
-        # Player starts at top-left cell, goal at bottom-right
-        self.player      = [1, 1]          # [grid_row, grid_col]
-        self.goal        = [self.grid_h - 2, self.grid_w - 2]
-        self.visited     = set()
-        self.visited.add((1, 1))
-        self.move_count  = 0
-        self.won         = False
-
-        # Binary path log — last 16 moves as bits
+        self.player    = [1, 1]
+        self.goal      = [self.grid_h - 2, self.grid_w - 2]
+        self.visited   = {(1, 1)}
+        self.move_count = 0
+        self.won        = False
         self.bit_log: list[str] = []
-
-        maze_px_w = self.grid_w * CELL_PX
-        maze_px_h = self.grid_h * CELL_PX
-        self.setMinimumSize(maze_px_w, maze_px_h)
-        self.setFixedSize(maze_px_w, maze_px_h)
+        w = self.grid_w * CELL_PX
+        h = self.grid_h * CELL_PX
+        self.setFixedSize(w, h)
 
     def reset(self):
         self._init_maze()
         self.update()
-
-    # ── timers ─────────────────────────────────────────────────────────────
 
     def _blink(self):
         self.blink_on = not self.blink_on
@@ -161,26 +130,38 @@ class MazeWidget(QWidget):
 
     def _tick_rain(self):
         for i in range(len(self._rain_rows)):
-            self._rain_rows[i] += 0.7
+            self._rain_rows[i] += 0.6
             if self._rain_rows[i] > self.grid_h * 2:
                 self._rain_rows[i] = 0
                 self._rain_cols[i] = random.randint(0, self.grid_w * 2)
         self.update()
 
-    # ── keyboard ───────────────────────────────────────────────────────────
+    # ── movement ───────────────────────────────────────────────────────────
+
+    def move(self, dr: int, dc: int, bit_label: str):
+        if self.won:
+            return
+        nr, nc = self.player[0] + dr, self.player[1] + dc
+        if (0 <= nr < self.grid_h and 0 <= nc < self.grid_w
+                and not self.maze[nr, nc]):
+            self.player = [nr, nc]
+            self.visited.add((nr, nc))
+            self.move_count += 1
+            self.bit_log.append(bit_label)
+            if len(self.bit_log) > 32:
+                self.bit_log.pop(0)
+            if hasattr(self.parent(), "update_info"):
+                self.parent().update_info(self.move_count, self.bit_log)
+            if self.player == self.goal:
+                self.won = True
+        self.update()
 
     def keyPressEvent(self, event: QKeyEvent):
         if self.won:
             if event.key() in (Qt.Key.Key_R, Qt.Key.Key_Return, Qt.Key.Key_Space):
                 self.reset()
             return
-
-        key = event.key()
-
-        # Binary choice pairs:
-        #   Up / Down  → vertical axis   (bit 0 = up, bit 1 = down)
-        #   Left / Right → horizontal    (bit 0 = left, bit 1 = right)
-        move_map = {
+        key_map = {
             Qt.Key.Key_Up:    (-1,  0, "↑0"),
             Qt.Key.Key_W:     (-1,  0, "↑0"),
             Qt.Key.Key_Down:  ( 1,  0, "↓1"),
@@ -190,248 +171,232 @@ class MazeWidget(QWidget):
             Qt.Key.Key_Right: ( 0,  1, "→1"),
             Qt.Key.Key_D:     ( 0,  1, "→1"),
         }
-
-        if key == Qt.Key.Key_R:
+        if event.key() == Qt.Key.Key_R:
             self.reset()
-            return
-
-        if key not in move_map:
-            return
-
-        dr, dc, bit_label = move_map[key]
-        nr, nc = self.player[0] + dr, self.player[1] + dc
-
-        # Check bounds and wall
-        if (0 <= nr < self.grid_h and 0 <= nc < self.grid_w
-                and not self.maze[nr, nc]):
-            self.player = [nr, nc]
-            self.visited.add((nr, nc))
-            self.move_count += 1
-            self.bit_log.append(bit_label)
-            if len(self.bit_log) > 32:
-                self.bit_log.pop(0)
-
-            # Notify parent to update info panel
-            if hasattr(self.parent(), "update_info"):
-                self.parent().update_info(self.move_count, self.bit_log)
-
-            if self.player == self.goal:
-                self.won = True
-
-        self.update()
+        elif event.key() in key_map:
+            self.move(*key_map[event.key()])
 
     # ── painting ───────────────────────────────────────────────────────────
 
     def paintEvent(self, _):
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
-
-        # Background
-        painter.fillRect(self.rect(), BG_COLOR)
-
-        # Binary rain (decorative, very dim)
-        self._draw_rain(painter)
-
-        # Visited trail
-        self._draw_visited(painter)
-
-        # Maze walls
-        self._draw_walls(painter)
-
-        # Goal
-        self._draw_goal(painter)
-
-        # Player
-        self._draw_player(painter)
-
-        # Win overlay
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing, False)
+        p.fillRect(self.rect(), BG_COLOR)
+        self._draw_rain(p)
+        self._draw_visited(p)
+        self._draw_walls(p)
+        self._draw_goal(p)
+        self._draw_player(p)
         if self.won:
-            self._draw_win(painter)
+            self._draw_win(p)
+        p.end()
 
-        painter.end()
+    def _cell_rect(self, r, c):
+        return QRect(c * CELL_PX, r * CELL_PX, CELL_PX, CELL_PX)
 
-    def _cell_rect(self, row: int, col: int) -> QRect:
-        return QRect(col * CELL_PX, row * CELL_PX, CELL_PX, CELL_PX)
-
-    def _draw_rain(self, p: QPainter):
-        font = QFont("Courier", 7)
-        p.setFont(font)
-        p.setPen(QColor(15, 45, 15))
-        bits = "01"
+    def _draw_rain(self, p):
+        p.setFont(QFont("Courier", 6))
+        p.setPen(QColor(15, 40, 15))
         for i, (rc, rr) in enumerate(zip(self._rain_cols, self._rain_rows)):
-            x = int(rc * (CELL_PX // 2))
-            y = int(rr * (CELL_PX // 2))
-            p.drawText(x, y, bits[i % 2])
+            p.drawText(int(rc * (CELL_PX // 2)), int(rr * (CELL_PX // 2)), "01"[i % 2])
 
-    def _draw_visited(self, p: QPainter):
+    def _draw_visited(self, p):
         for (r, c) in self.visited:
-            rect = self._cell_rect(r, c)
-            p.fillRect(rect, VISITED_COLOR)
+            p.fillRect(self._cell_rect(r, c), VISITED_COLOR)
 
-    def _draw_walls(self, p: QPainter):
-        p.setPen(Qt.PenStyle.NoPen)
-        p.setBrush(QBrush(WALL_COLOR))
+    def _draw_walls(self, p):
         for r in range(self.grid_h):
             for c in range(self.grid_w):
                 if self.maze[r, c]:
-                    rect = self._cell_rect(r, c)
-                    p.fillRect(rect, WALL_COLOR)
-
-        # Subtle grid lines on open cells
+                    p.fillRect(self._cell_rect(r, c), WALL_COLOR)
         p.setPen(QPen(GRID_COLOR, 1))
         for r in range(0, self.grid_h * CELL_PX, CELL_PX):
             p.drawLine(0, r, self.grid_w * CELL_PX, r)
         for c in range(0, self.grid_w * CELL_PX, CELL_PX):
             p.drawLine(c, 0, c, self.grid_h * CELL_PX)
 
-    def _draw_goal(self, p: QPainter):
+    def _draw_goal(self, p):
         gr, gc = self.goal
         rect = self._cell_rect(gr, gc)
-        # Pulsing gold square
         p.fillRect(rect, GOAL_COLOR if self.blink_on else QColor(180, 140, 0))
-        p.setPen(QPen(QColor(255, 255, 200), 2))
-        font = QFont("Courier", 8, QFont.Weight.Bold)
-        p.setFont(font)
+        p.setPen(QPen(QColor(255, 255, 200), 1))
+        p.setFont(QFont("Courier", 7, QFont.Weight.Bold))
         p.drawText(rect, Qt.AlignmentFlag.AlignCenter, "1")
 
-    def _draw_player(self, p: QPainter):
+    def _draw_player(self, p):
         pr, pc = self.player
-        rect   = self._cell_rect(pr, pc)
-        inset  = rect.adjusted(6, 6, -6, -6)
-
-        color  = PLAYER_COLOR if self.blink_on else QColor(40, 160, 60)
+        rect  = self._cell_rect(pr, pc)
+        inset = rect.adjusted(4, 4, -4, -4)
+        color = PLAYER_COLOR if self.blink_on else QColor(40, 160, 60)
         p.setBrush(QBrush(color))
         p.setPen(QPen(QColor(200, 255, 200), 1))
-        p.drawRoundedRect(inset, 4, 4)
-
-        # "0" label inside player (classical bit = known state)
+        p.drawRoundedRect(inset, 3, 3)
         p.setPen(QPen(BG_COLOR))
-        font = QFont("Courier", 9, QFont.Weight.Bold)
-        p.setFont(font)
+        p.setFont(QFont("Courier", 7, QFont.Weight.Bold))
         p.drawText(inset, Qt.AlignmentFlag.AlignCenter, "0")
 
-    def _draw_win(self, p: QPainter):
-        # Semi-transparent overlay
-        overlay = QColor(0, 0, 0, 180)
-        p.fillRect(self.rect(), overlay)
-
+    def _draw_win(self, p):
+        p.fillRect(self.rect(), QColor(0, 0, 0, 180))
         p.setPen(QPen(GOAL_COLOR))
-        font = QFont("Courier", 18, QFont.Weight.Bold)
-        p.setFont(font)
+        p.setFont(QFont("Courier", 13, QFont.Weight.Bold))
         p.drawText(
-            self.rect(),
-            Qt.AlignmentFlag.AlignCenter,
-            f"SOLUTION FOUND\n{self.move_count} STEPS\n\nPRESS R TO RESET",
+            self.rect(), Qt.AlignmentFlag.AlignCenter,
+            f"SOLVED!\n{self.move_count} STEPS",
         )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Info Panel  (right sidebar)
+# D-pad button panel
+# ─────────────────────────────────────────────────────────────────────────────
+
+BTN_STYLE = """
+    QPushButton {
+        background-color: #0a1a0a;
+        color: #28c840;
+        border: 2px solid #1e6432;
+        border-radius: 6px;
+        font-family: Courier;
+        font-size: 18px;
+        font-weight: bold;
+    }
+    QPushButton:pressed {
+        background-color: #1e6432;
+        color: #80ff80;
+    }
+"""
+
+RESET_STYLE = """
+    QPushButton {
+        background-color: #0a1a0a;
+        color: #1e9932;
+        border: 2px solid #1e6432;
+        border-radius: 6px;
+        font-family: Courier;
+        font-size: 10px;
+        font-weight: bold;
+        letter-spacing: 2px;
+    }
+    QPushButton:pressed {
+        background-color: #1e6432;
+        color: #80ff80;
+    }
+"""
+
+
+class DPad(QWidget):
+    """D-pad: up/down/left/right buttons + reset."""
+
+    def __init__(self, maze: MazeWidget, parent=None):
+        super().__init__(parent)
+        self.maze = maze
+        self.setStyleSheet("background-color: #080c08;")
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(8, 6, 8, 6)
+        outer.setSpacing(6)
+
+        # D-pad grid  (3×3, center empty)
+        grid = QGridLayout()
+        grid.setSpacing(4)
+
+        def btn(label, dr, dc, bit):
+            b = QPushButton(label)
+            b.setFixedSize(QSize(48, 48))
+            b.setStyleSheet(BTN_STYLE)
+            b.clicked.connect(lambda: maze.move(dr, dc, bit))
+            return b
+
+        grid.addWidget(btn("↑", -1,  0, "↑0"), 0, 1)
+        grid.addWidget(btn("←",  0, -1, "←0"), 1, 0)
+        grid.addWidget(btn("↓",  1,  0, "↓1"), 2, 1)
+        grid.addWidget(btn("→",  0,  1, "→1"), 1, 2)
+
+        outer.addLayout(grid)
+
+        # Reset button
+        reset_btn = QPushButton("RESET")
+        reset_btn.setFixedHeight(34)
+        reset_btn.setStyleSheet(RESET_STYLE)
+        reset_btn.clicked.connect(maze.reset)
+        outer.addWidget(reset_btn)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Info Panel
 # ─────────────────────────────────────────────────────────────────────────────
 
 class InfoPanel(QFrame):
-    """Displays binary state, move counter, and an explanation."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setStyleSheet(
             "background-color: #080c08; border-left: 2px solid #1e6432;"
         )
-        self.setFixedWidth(260)
+        self.setFixedWidth(210)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(14, 18, 14, 14)
-        layout.setSpacing(10)
+        layout.setContentsMargins(12, 14, 12, 12)
+        layout.setSpacing(8)
 
-        # Title
-        title = QLabel("CLASSICAL COMPUTER")
-        title.setFont(QFont("Courier", 11, QFont.Weight.Bold))
+        title = QLabel("CLASSICAL\nCOMPUTER")
+        title.setFont(QFont("Courier", 10, QFont.Weight.Bold))
         title.setStyleSheet(f"color: {ACCENT_COLOR.name()}; letter-spacing: 2px;")
-        title.setWordWrap(True)
         layout.addWidget(title)
 
-        sub = QLabel("MAZE SIMULATOR v1.0")
-        sub.setFont(QFont("Courier", 8))
-        sub.setStyleSheet(f"color: {DIM_TEXT.name()};")
-        layout.addWidget(sub)
+        layout.addWidget(self._sep())
+        layout.addWidget(self._section("STATE"))
+        self.state_lbl = QLabel("0  (KNOWN)")
+        self.state_lbl.setFont(QFont("Courier", 11, QFont.Weight.Bold))
+        self.state_lbl.setStyleSheet(f"color: {PLAYER_COLOR.name()};")
+        layout.addWidget(self.state_lbl)
 
-        layout.addWidget(self._separator())
+        layout.addWidget(self._sep())
+        layout.addWidget(self._section("STEPS"))
+        self.moves_lbl = QLabel("0")
+        self.moves_lbl.setFont(QFont("Courier", 18, QFont.Weight.Bold))
+        self.moves_lbl.setStyleSheet(f"color: {TEXT_COLOR.name()};")
+        layout.addWidget(self.moves_lbl)
 
-        # State indicator
-        layout.addWidget(self._section("CURRENT STATE"))
-        self.state_label = QLabel("0  (KNOWN)")
-        self.state_label.setFont(QFont("Courier", 13, QFont.Weight.Bold))
-        self.state_label.setStyleSheet(f"color: {PLAYER_COLOR.name()};")
-        layout.addWidget(self.state_label)
+        layout.addWidget(self._sep())
+        layout.addWidget(self._section("BIT LOG"))
+        self.bit_lbl = QLabel("—")
+        self.bit_lbl.setFont(QFont("Courier", 8))
+        self.bit_lbl.setStyleSheet(f"color: {TEXT_COLOR.name()};")
+        self.bit_lbl.setWordWrap(True)
+        layout.addWidget(self.bit_lbl)
 
-        layout.addWidget(self._separator())
-
-        # Move counter
-        layout.addWidget(self._section("STEPS TAKEN"))
-        self.moves_label = QLabel("0")
-        self.moves_label.setFont(QFont("Courier", 20, QFont.Weight.Bold))
-        self.moves_label.setStyleSheet(f"color: {TEXT_COLOR.name()};")
-        layout.addWidget(self.moves_label)
-
-        layout.addWidget(self._separator())
-
-        # Binary decision log
-        layout.addWidget(self._section("BINARY DECISIONS"))
-        self.bit_display = QLabel("—")
-        self.bit_display.setFont(QFont("Courier", 9))
-        self.bit_display.setStyleSheet(f"color: {TEXT_COLOR.name()};")
-        self.bit_display.setWordWrap(True)
-        layout.addWidget(self.bit_display)
-
-        layout.addWidget(self._separator())
-
-        # Explanation
-        layout.addWidget(self._section("HOW IT WORKS"))
-        explanation = QLabel(
-            "A classical bit is always\n"
-            "EXACTLY 0 or 1.\n\n"
-            "Each move is a binary\n"
-            "choice:\n"
-            "  ← / ↑  =  0\n"
-            "  → / ↓  =  1\n\n"
-            "The computer knows its\n"
-            "exact position at ALL\n"
-            "times.\n\n"
-            "Only ONE path exists\nat any moment."
+        layout.addWidget(self._sep())
+        layout.addWidget(self._section("CONCEPT"))
+        info = QLabel(
+            "Classical bit:\nalways 0 OR 1.\n\n"
+            "← ↑ = 0\n→ ↓ = 1\n\n"
+            "One definite path.\nNo superposition."
         )
-        explanation.setFont(QFont("Courier", 8))
-        explanation.setStyleSheet(f"color: {DIM_TEXT.name()};")
-        explanation.setWordWrap(True)
-        layout.addWidget(explanation)
+        info.setFont(QFont("Courier", 8))
+        info.setStyleSheet(f"color: {DIM_TEXT.name()};")
+        info.setWordWrap(True)
+        layout.addWidget(info)
 
         layout.addStretch()
 
-        # Controls hint
-        hint = QLabel("WASD / ARROWS = move\nR = new maze")
-        hint.setFont(QFont("Courier", 7))
-        hint.setStyleSheet(f"color: {DIM_TEXT.name()};")
-        layout.addWidget(hint)
-
-    def _separator(self):
+    def _sep(self):
         line = QFrame()
         line.setFrameShape(QFrame.Shape.HLine)
         line.setStyleSheet("color: #1e6432;")
         return line
 
-    def _section(self, text: str):
+    def _section(self, text):
         lbl = QLabel(text)
         lbl.setFont(QFont("Courier", 7, QFont.Weight.Bold))
         lbl.setStyleSheet(f"color: {DIM_TEXT.name()}; letter-spacing: 1px;")
         return lbl
 
     def update_info(self, moves: int, bit_log: list):
-        self.moves_label.setText(str(moves))
-
-        # Show last 16 bits grouped in 4
-        bits_only = "".join("0" if "0" in b else "1" for b in bit_log[-16:])
-        grouped   = " ".join(bits_only[i:i+4] for i in range(0, len(bits_only), 4))
-        directions = "  ".join(bit_log[-8:])
-        self.bit_display.setText(f"{grouped}\n\n{directions}")
+        self.moves_lbl.setText(str(moves))
+        bits    = "".join("0" if "0" in b else "1" for b in bit_log[-16:])
+        grouped = " ".join(bits[i:i+4] for i in range(0, len(bits), 4))
+        dirs    = "  ".join(bit_log[-6:])
+        self.bit_lbl.setText(f"{grouped}\n{dirs}")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -439,63 +404,57 @@ class InfoPanel(QFrame):
 # ─────────────────────────────────────────────────────────────────────────────
 
 class ClassicalMazeWindow(QMainWindow):
-    """Top-level window: maze on the left, info panel on the right."""
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Classical Computer — Binary Maze  |  Quantum Exhibition")
+        self.setWindowTitle("Classical Maze  |  Quantum Exhibition")
         self.setStyleSheet("background-color: #080c08;")
 
         central = QWidget()
         self.setCentralWidget(central)
 
-        h_layout = QHBoxLayout(central)
-        h_layout.setContentsMargins(0, 0, 0, 0)
-        h_layout.setSpacing(0)
+        root = QHBoxLayout(central)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
 
-        # Left: maze + bottom label
-        left_widget = QWidget()
-        left_layout = QVBoxLayout(left_widget)
+        # ── Left column: top bar + maze + d-pad ──
+        left = QWidget()
+        left_layout = QVBoxLayout(left)
         left_layout.setContentsMargins(0, 0, 0, 0)
         left_layout.setSpacing(0)
 
-        # Top label bar
-        top_bar = QLabel(
-            "  CLASSICAL COMPUTER  ·  DETERMINISTIC  ·  ONE STATE AT A TIME  ·  BINARY"
-        )
-        top_bar.setFont(QFont("Courier", 8))
+        top_bar = QLabel("  CLASSICAL · DETERMINISTIC · BINARY  ")
+        top_bar.setFont(QFont("Courier", 7))
         top_bar.setStyleSheet(
             "color: #1e6432; background-color: #040804;"
-            "padding: 5px; border-bottom: 1px solid #1e6432;"
+            "padding: 4px; border-bottom: 1px solid #1e6432;"
         )
         left_layout.addWidget(top_bar)
 
-        # Maze
         self.maze_widget = MazeWidget(self)
         left_layout.addWidget(self.maze_widget)
 
-        # Bottom bar
-        bottom_bar = QLabel(
-            "  STATE: KNOWN  ·  PATH: DETERMINISTIC  ·  SUPERPOSITION: NONE"
-        )
-        bottom_bar.setFont(QFont("Courier", 8))
+        self.dpad = DPad(self.maze_widget, self)
+        left_layout.addWidget(self.dpad, alignment=Qt.AlignmentFlag.AlignCenter)
+
+        bottom_bar = QLabel("  STATE: KNOWN · SUPERPOSITION: NONE  ")
+        bottom_bar.setFont(QFont("Courier", 7))
         bottom_bar.setStyleSheet(
             "color: #1e6432; background-color: #040804;"
-            "padding: 5px; border-top: 1px solid #1e6432;"
+            "padding: 4px; border-top: 1px solid #1e6432;"
         )
         left_layout.addWidget(bottom_bar)
 
-        h_layout.addWidget(left_widget)
+        root.addWidget(left)
 
-        # Right: info panel
+        # ── Right column: info panel ──
         self.info_panel = InfoPanel(self)
-        h_layout.addWidget(self.info_panel)
+        root.addWidget(self.info_panel)
 
         self.adjustSize()
         self.setFixedSize(self.sizeHint())
 
-    # Forward maze events to info panel
-    def update_info(self, moves: int, bit_log: list):
+    def update_info(self, moves, bit_log):
         self.info_panel.update_info(moves, bit_log)
 
     def keyPressEvent(self, event: QKeyEvent):
@@ -509,7 +468,6 @@ class ClassicalMazeWindow(QMainWindow):
 def main():
     app = QApplication(sys.argv)
     app.setApplicationName("Classical Maze — Quantum Exhibition")
-
     window = ClassicalMazeWindow()
     window.show()
     sys.exit(app.exec())
