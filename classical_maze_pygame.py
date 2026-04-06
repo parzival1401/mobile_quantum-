@@ -3,8 +3,12 @@ classical_maze_pygame.py  —  Classical Computer: The Maze Runner
 =================================================================
 Quantum Exhibition  |  Classical vs Quantum Computing
 
-ZONE 1  (top 1/4 )  : 8-bit switch panel — one bit flips & glows red each move
-ZONE 2  (bottom 3/4): Circuit-board maze with animated turtle-in-hard-hat avatar
+ZONE 1  (top 1/4 )  : 8-bit switch panel  — one bit flips & glows red per move
+ZONE 2  (bottom 3/4): Clock panel (left) + Circuit-board maze (right)
+
+Clock rule: the player can ONLY move during the TICK (GO!) phase of the clock.
+            Trying to move during TOCK (WAIT) shows a warning and blocks the move.
+            This mirrors how a real CPU can only execute one instruction per clock cycle.
 
 Controls: Arrow keys   R = new maze   ESC = quit
 """
@@ -13,14 +17,16 @@ import pygame
 import sys
 import random
 import math
+from collections import deque
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Display
 # ─────────────────────────────────────────────────────────────────────────────
-WIDTH, HEIGHT = 980, 680
-ZONE1_H = 165          # bit-status panel  (≈ 1/4)
-ZONE2_H = HEIGHT - ZONE1_H
-FPS = 60
+WIDTH, HEIGHT  = 1060, 680
+ZONE1_H        = 165           # top bit-status panel  (≈ 1/4)
+ZONE2_H        = HEIGHT - ZONE1_H
+CLOCK_PANEL_W  = 185           # left clock column inside Zone 2
+FPS            = 60
 
 pygame.init()
 screen = pygame.display.set_mode((WIDTH, HEIGHT))
@@ -45,7 +51,10 @@ BIT_OFF     = (22,  44, 22)
 BIT_ON      = (175, 22, 22)
 BIT_GLOW    = (255, 82, 82)
 DIM         = (40,  85, 40)
-DARK_GRN    = (15,  45, 15)
+AMBER       = (255, 160,  0)
+AMBER_DIM   = (100, 62,  0)
+GO_GREEN    = (30, 220, 80)
+GO_DIM      = (12,  80, 30)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Fonts
@@ -58,29 +67,46 @@ def _font(size, bold=True):
             pass
     return pygame.font.Font(None, size)
 
-F_TITLE = _font(21)
-F_MED   = _font(15)
-F_SM    = _font(12)
-F_LARGE = _font(30)
-F_XSM   = _font(10)
+F_TITLE  = _font(21)
+F_MED    = _font(15)
+F_SM     = _font(12)
+F_LARGE  = _font(30)
+F_XSM    = _font(10)
+F_CLOCK  = _font(28)        # big GO! / WAIT label
+F_CLKSUB = _font(11)
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Maze parameters & generation
+# Clock constants
 # ─────────────────────────────────────────────────────────────────────────────
-MAZE_COLS, MAZE_ROWS = 17, 10   # logical cells  (larger = more complex path)
+CLOCK_PERIOD     = 120        # frames per full cycle  (2 s at 60 fps)
+CLOCK_TICK_FRAMES = 70        # frames the clock is HIGH  ("TICK / GO!")
+#                               remaining 50 frames = LOW  ("TOCK / WAIT")
+
+WAVE_W           = CLOCK_PANEL_W - 20   # pixels wide for the waveform
+WAVE_SAMPLES     = WAVE_W               # one sample per pixel column
+WAVE_SAMPLE_EVERY = 2                   # sample clock state every N frames
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Maze parameters
+# ─────────────────────────────────────────────────────────────────────────────
+MAZE_COLS, MAZE_ROWS = 17, 10
 GRID_W = 2 * MAZE_COLS + 1
 GRID_H = 2 * MAZE_ROWS + 1
 
-CELL = min((ZONE2_H - 60) // GRID_H, (WIDTH - 40) // GRID_W)
-MAZE_PX_W = GRID_W * CELL
-MAZE_PX_H = GRID_H * CELL
-MAZE_OX   = (WIDTH - MAZE_PX_W) // 2
-MAZE_OY   = ZONE1_H + 30
+MAZE_AREA_W = WIDTH - CLOCK_PANEL_W
+CELL        = min((ZONE2_H - 60) // GRID_H, (MAZE_AREA_W - 30) // GRID_W)
+MAZE_PX_W   = GRID_W * CELL
+MAZE_PX_H   = GRID_H * CELL
+MAZE_OX     = CLOCK_PANEL_W + (MAZE_AREA_W - MAZE_PX_W) // 2
+MAZE_OY     = ZONE1_H + 30
 
 PLAYER_START = [1, 1]
 GOAL_POS     = [GRID_H - 2, GRID_W - 2]
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Maze generation
+# ─────────────────────────────────────────────────────────────────────────────
 def generate_maze(cols, rows):
     gw, gh = 2 * cols + 1, 2 * rows + 1
     grid = [[True] * gw for _ in range(gh)]
@@ -105,7 +131,6 @@ def generate_maze(cols, rows):
 
 
 def build_wall_decor(maze):
-    """Pre-generate deterministic circuit-board decorations per wall cell."""
     decor = {}
     for r in range(GRID_H):
         for c in range(GRID_W):
@@ -130,8 +155,8 @@ def build_maze_surface(maze, decor):
         for c in range(GRID_W):
             x, y = c * CELL, r * CELL
             if maze[r][c]:
-                pygame.draw.rect(surf, PCB_DARK,  (x, y, CELL, CELL))
-                pygame.draw.rect(surf, PCB_MID,   (x, y, CELL, CELL), 1)
+                pygame.draw.rect(surf, PCB_DARK, (x, y, CELL, CELL))
+                pygame.draw.rect(surf, PCB_MID,  (x, y, CELL, CELL), 1)
                 for d in decor.get((r, c), []):
                     if d[0] == 'h':
                         pygame.draw.line(surf, PCB_TRACE,
@@ -145,9 +170,9 @@ def build_maze_surface(maze, decor):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Game state (mutable, reset-able)
+# Game state
 # ─────────────────────────────────────────────────────────────────────────────
-maze      = generate_maze(MAZE_COLS, MAZE_ROWS)
+maze       = generate_maze(MAZE_COLS, MAZE_ROWS)
 wall_decor = build_wall_decor(maze)
 maze_surf  = build_maze_surface(maze, wall_decor)
 
@@ -162,11 +187,19 @@ bit_flash  = 0
 wall_flash = 0
 tick       = 0
 
+# Clock state
+clock_phase   = 0          # frame index within current period (0 … CLOCK_PERIOD-1)
+clk_history   = deque([0] * WAVE_SAMPLES, maxlen=WAVE_SAMPLES)  # 0=LOW, 1=HIGH
+clk_blocked   = 0          # frames to show "wait for tick!" warning
+
+
+def clock_is_high():
+    return clock_phase < CLOCK_TICK_FRAMES
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Helpers
 # ─────────────────────────────────────────────────────────────────────────────
-
 def cell_center(row, col):
     return (MAZE_OX + col * CELL + CELL // 2,
             MAZE_OY + row * CELL + CELL // 2)
@@ -175,20 +208,15 @@ def cell_center(row, col):
 # ─────────────────────────────────────────────────────────────────────────────
 # Drawing — Zone 1: bit panel
 # ─────────────────────────────────────────────────────────────────────────────
-
 def draw_bit_panel():
     pygame.draw.rect(screen, PCB_DARK, (0, 0, WIDTH, ZONE1_H))
     pygame.draw.rect(screen, PCB_TRACE, (0, 0, WIDTH, ZONE1_H), 2)
-
-    # Subtle vertical lines (PCB feel)
     for x in range(0, WIDTH, 55):
         pygame.draw.line(screen, PCB_MID, (x, 0), (x, ZONE1_H))
 
-    # Title
     t = F_TITLE.render("CLASSICAL COMPUTER:  THE MAZE RUNNER", True, NEON_GREEN)
     screen.blit(t, ((WIDTH - t.get_width()) // 2, 7))
 
-    # 8 bit switches
     BW, BH = 48, 48
     GAP    = 10
     TW     = 8 * BW + 7 * GAP
@@ -215,28 +243,179 @@ def draw_bit_panel():
         screen.blit(v, (rect.centerx - v.get_width() // 2,
                         rect.centery - v.get_height() // 2))
 
-    # Binary string + decoded value
     bin_str = "".join(str(b) for b in bits)
     dec_val = int(bin_str, 2)
-
     bs = F_MED.render(bin_str, True, BRIGHT_GRN)
     screen.blit(bs, ((WIDTH - bs.get_width()) // 2, by + BH + 7))
-
     dv = F_XSM.render(
-        f"0b {bin_str}   =   0x{dec_val:02X}   =   {dec_val:3d}",
-        True, DIM,
-    )
+        f"0b {bin_str}   =   0x{dec_val:02X}   =   {dec_val:3d}", True, DIM)
     screen.blit(dv, ((WIDTH - dv.get_width()) // 2, by + BH + 26))
-
-    # Step counter
     sc = F_XSM.render(f"STEPS: {move_count}", True, DIM)
     screen.blit(sc, (12, ZONE1_H - 18))
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Drawing — Clock panel  (left side of Zone 2)
+# ─────────────────────────────────────────────────────────────────────────────
+def draw_clock_panel():
+    px, py = 0, ZONE1_H
+    pw, ph = CLOCK_PANEL_W, ZONE2_H
+
+    # Background
+    pygame.draw.rect(screen, PCB_DARK, (px, py, pw, ph))
+    pygame.draw.rect(screen, PCB_TRACE, (px, py, pw, ph), 2)
+
+    is_high = clock_is_high()
+    y = py + 12
+
+    # ── Title ────────────────────────────────────────────────────────────
+    title = F_CLKSUB.render("⚡  CPU  CLOCK  ⚡", True, NEON_GREEN)
+    screen.blit(title, (px + (pw - title.get_width()) // 2, y))
+    y += 20
+
+    # ── Square wave ──────────────────────────────────────────────────────
+    wave_x  = px + 10
+    wave_y  = y
+    wave_h  = 72
+    high_y  = wave_y + 8           # y for HIGH level line
+    low_y   = wave_y + wave_h - 8  # y for LOW level line
+
+    # Wave background box
+    pygame.draw.rect(screen, (5, 18, 5), (wave_x, wave_y, WAVE_W, wave_h))
+    pygame.draw.rect(screen, PCB_MID,   (wave_x, wave_y, WAVE_W, wave_h), 1)
+
+    # Reference lines (dim)
+    pygame.draw.line(screen, (15, 40, 15), (wave_x, high_y), (wave_x + WAVE_W, high_y), 1)
+    pygame.draw.line(screen, (15, 40, 15), (wave_x, low_y),  (wave_x + WAVE_W, low_y),  1)
+
+    # Draw waveform as a polyline
+    hist = list(clk_history)
+    pts  = []
+    for i, s in enumerate(hist):
+        xp = wave_x + i
+        yp = high_y if s else low_y
+        # Insert vertical segment on transitions
+        if i > 0 and hist[i] != hist[i - 1]:
+            pts.append((xp, high_y if hist[i - 1] else low_y))
+        pts.append((xp, yp))
+
+    if len(pts) >= 2:
+        wave_color = GO_GREEN if is_high else AMBER
+        pygame.draw.lines(screen, wave_color, False, pts, 2)
+
+    # Cursor — bright vertical line at rightmost sample
+    cursor_x = wave_x + WAVE_W - 1
+    pygame.draw.line(screen, WHITE, (cursor_x, wave_y + 2), (cursor_x, wave_y + wave_h - 2), 1)
+
+    # Labels "1" / "0" on the side
+    lbl1 = F_XSM.render("1", True, DIM)
+    lbl0 = F_XSM.render("0", True, DIM)
+    screen.blit(lbl1, (wave_x - 8, high_y - 5))
+    screen.blit(lbl0, (wave_x - 8, low_y  - 5))
+
+    y += wave_h + 14
+
+    # ── Big state indicator ───────────────────────────────────────────────
+    ind_w, ind_h = pw - 20, 58
+    ind_x = px + 10
+    ind_y = y
+
+    if is_high:
+        bg_col   = (12, 80, 28)
+        border_c = GO_GREEN
+        label    = "GO!"
+        sub      = "(TICK)"
+        txt_col  = GO_GREEN
+    else:
+        bg_col   = (70, 42, 0)
+        border_c = AMBER
+        label    = "WAIT"
+        sub      = "(TOCK)"
+        txt_col  = AMBER
+
+    # Glow behind box when GO
+    if is_high:
+        pulse = 0.6 + 0.4 * math.sin(tick * 0.15)
+        glow_surf = pygame.Surface((ind_w + 12, ind_h + 12), pygame.SRCALPHA)
+        glow_surf.fill((0, int(180 * pulse), 40, 50))
+        screen.blit(glow_surf, (ind_x - 6, ind_y - 6))
+
+    pygame.draw.rect(screen, bg_col,   (ind_x, ind_y, ind_w, ind_h), border_radius=6)
+    pygame.draw.rect(screen, border_c, (ind_x, ind_y, ind_w, ind_h), 2, border_radius=6)
+
+    lbl  = F_CLOCK.render(label, True, txt_col)
+    slbl = F_CLKSUB.render(sub,  True, border_c)
+    screen.blit(lbl,  (ind_x + (ind_w - lbl.get_width())  // 2, ind_y + 6))
+    screen.blit(slbl, (ind_x + (ind_w - slbl.get_width()) // 2, ind_y + ind_h - 18))
+
+    y += ind_h + 10
+
+    # ── Progress bar for current phase ───────────────────────────────────
+    bar_w   = pw - 20
+    bar_h   = 14
+    bar_x   = px + 10
+    bar_y   = y
+
+    if is_high:
+        phase_progress = clock_phase / CLOCK_TICK_FRAMES
+        bar_color = GO_GREEN
+    else:
+        phase_progress = (clock_phase - CLOCK_TICK_FRAMES) / (CLOCK_PERIOD - CLOCK_TICK_FRAMES)
+        bar_color = AMBER
+
+    filled = int(bar_w * phase_progress)
+    pygame.draw.rect(screen, (15, 30, 15), (bar_x, bar_y, bar_w, bar_h), border_radius=3)
+    if filled > 0:
+        pygame.draw.rect(screen, bar_color, (bar_x, bar_y, filled, bar_h), border_radius=3)
+    pygame.draw.rect(screen, PCB_MID, (bar_x, bar_y, bar_w, bar_h), 1, border_radius=3)
+
+    y += bar_h + 6
+
+    # Countdown text
+    if is_high:
+        frames_left = CLOCK_TICK_FRAMES - clock_phase
+    else:
+        frames_left = CLOCK_PERIOD - clock_phase
+    secs_left = frames_left / FPS
+    cdlbl = "MOVE NOW!" if is_high else f"next TICK in {secs_left:.1f}s"
+    cd = F_XSM.render(cdlbl, True, bar_color)
+    screen.blit(cd, (px + (pw - cd.get_width()) // 2, y))
+    y += 18
+
+    # ── Blocked warning ───────────────────────────────────────────────────
+    if clk_blocked > 0:
+        alpha   = int(255 * min(clk_blocked / 20, 1.0))
+        blink   = (tick // 6) % 2 == 0
+        if blink:
+            wt = F_SM.render("⛔ WAIT FOR TICK!", True, (255, alpha // 2, 0))
+            screen.blit(wt, (px + (pw - wt.get_width()) // 2, y))
+    y += 22
+
+    # ── Divider ───────────────────────────────────────────────────────────
+    pygame.draw.line(screen, PCB_MID, (px + 10, y), (px + pw - 10, y))
+    y += 10
+
+    # ── Non-technical explanation ─────────────────────────────────────────
+    lines = [
+        "Think of the clock",
+        "as a heartbeat.",
+        "",
+        "The computer can",
+        "only act on each",
+        "TICK — one step",
+        "at a time.",
+        "",
+        "No TICK = no move.",
+    ]
+    for line in lines:
+        t = F_XSM.render(line, True, DIM)
+        screen.blit(t, (px + (pw - t.get_width()) // 2, y))
+        y += 13
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Drawing — Zone 2: maze elements
 # ─────────────────────────────────────────────────────────────────────────────
-
 def draw_path_trail():
     if len(path) < 2:
         return
@@ -258,10 +437,8 @@ def draw_goal():
     screen.blit(et, (gx + (CELL - et.get_width()) // 2,
                      gy + (CELL - et.get_height()) // 2))
 
-    # "ONE PATH AT A TIME." glowing text — positioned left of exit
     alpha = int(90 + 160 * abs(math.sin(tick * 0.035)))
     glow  = (0, min(255, alpha), 38)
-
     t1 = F_XSM.render("ONE PATH.", True, glow)
     t2 = F_XSM.render("ONE PATH AT A TIME.", True, glow)
     tx = gx - t2.get_width() - 6
@@ -276,51 +453,50 @@ def draw_wall_flash():
     screen.blit(fs, (MAZE_OX, MAZE_OY))
 
 
+def draw_clock_blocked_overlay():
+    """Amber tint on maze when player tries to move during TOCK."""
+    alpha = int(120 * clk_blocked / 25)
+    fs    = pygame.Surface((MAZE_PX_W, MAZE_PX_H), pygame.SRCALPHA)
+    fs.fill((200, 120, 0, alpha))
+    screen.blit(fs, (MAZE_OX, MAZE_OY))
+
+
 def draw_turtle(row, col):
     cx, cy = cell_center(row, col)
     r = max(CELL // 2 - 2, 8)
 
-    # Legs (4 rounded bumps)
     leg_c = (28, 130, 48)
     leg_r = max(3, r // 4)
     for dx, dy in [(r - 4, -(r - 4)), (r - 4, r - 4),
                    (-(r - 4), -(r - 4)), (-(r - 4), r - 4)]:
         pygame.draw.circle(screen, leg_c, (cx + dx, cy + dy), leg_r)
 
-    # Shell body
     shell_rect = pygame.Rect(cx - r + 2, cy - r + 2, 2 * r - 4, 2 * r - 4)
     pygame.draw.ellipse(screen, (24, 95, 34), shell_rect)
 
-    # Shell hex pattern
     inner = max(2, r // 3)
-    pygame.draw.circle(screen, (16, 65, 22), (cx,           cy),           inner)
-    pygame.draw.circle(screen, (16, 65, 22), (cx - r // 3,  cy - r // 3), inner - 1)
-    pygame.draw.circle(screen, (16, 65, 22), (cx + r // 3,  cy - r // 3), inner - 1)
-    pygame.draw.circle(screen, (16, 65, 22), (cx,           cy + r // 3), inner - 1)
+    pygame.draw.circle(screen, (16, 65, 22), (cx,          cy),          inner)
+    pygame.draw.circle(screen, (16, 65, 22), (cx - r // 3, cy - r // 3), inner - 1)
+    pygame.draw.circle(screen, (16, 65, 22), (cx + r // 3, cy - r // 3), inner - 1)
+    pygame.draw.circle(screen, (16, 65, 22), (cx,          cy + r // 3), inner - 1)
     pygame.draw.ellipse(screen, (42, 155, 55), shell_rect, 2)
 
-    # Head (right side, moving direction)
     hx = cx + r - 2
     pygame.draw.circle(screen, (50, 175, 68), (hx, cy), max(4, r // 3))
 
-    # Hard hat (yellow)
     hw    = max(10, r // 2 + 5)
     hh    = max(5,  r // 4 + 2)
     hat_y = cy - r // 3 - hh - 1
     pygame.draw.rect(screen, (220, 180, 0),
                      (hx - hw // 2, hat_y, hw, hh), border_radius=2)
     pygame.draw.rect(screen, (200, 150, 0),
-                     (hx - hw // 2 - 3, hat_y + hh - 3, hw + 6, 3),
-                     border_radius=1)
+                     (hx - hw // 2 - 3, hat_y + hh - 3, hw + 6, 3), border_radius=1)
 
 
 def draw_win():
     ov = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
     ov.fill((0, 0, 0, 175))
     screen.blit(ov, (0, 0))
-
-    pulse = 0.5 + 0.5 * math.sin(tick * 0.08)
-    gc    = (int(200 * pulse), int(200 + 55 * pulse), 0)
 
     t1 = F_LARGE.render("PATH COMPLETE!", True, GOLD)
     t2 = F_MED.render("One path.  One solution.  Sequential.", True, BRIGHT_GRN)
@@ -335,11 +511,15 @@ def draw_win():
 # ─────────────────────────────────────────────────────────────────────────────
 # Game logic
 # ─────────────────────────────────────────────────────────────────────────────
-
 def attempt_move(dr, dc):
-    global move_count, active_bit, bit_flash, wall_flash, won
+    global move_count, active_bit, bit_flash, wall_flash, won, clk_blocked
 
     if won:
+        return
+
+    # ── Clock gate: only allow movement during TICK (HIGH) phase ──────────
+    if not clock_is_high():
+        clk_blocked = 30   # show warning for 30 frames
         return
 
     nr, nc = player[0] + dr, player[1] + dc
@@ -364,6 +544,7 @@ def reset_game():
     global maze, wall_decor, maze_surf
     global player, path, move_count, won
     global bits, active_bit, bit_flash, wall_flash, tick
+    global clock_phase, clk_history, clk_blocked
 
     maze       = generate_maze(MAZE_COLS, MAZE_ROWS)
     wall_decor = build_wall_decor(maze)
@@ -378,49 +559,53 @@ def reset_game():
     bit_flash  = 0
     wall_flash = 0
     tick       = 0
+    clock_phase  = 0
+    clk_history  = deque([0] * WAVE_SAMPLES, maxlen=WAVE_SAMPLES)
+    clk_blocked  = 0
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Main loop
 # ─────────────────────────────────────────────────────────────────────────────
-
 def main():
-    global bit_flash, wall_flash, tick
+    global bit_flash, wall_flash, tick, clock_phase, clk_blocked
 
     while True:
         clock.tick(FPS)
-        tick += 1
+        tick       += 1
+        clock_phase = tick % CLOCK_PERIOD
+
+        # Sample waveform history every N frames
+        if tick % WAVE_SAMPLE_EVERY == 0:
+            clk_history.append(1 if clock_is_high() else 0)
 
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
-                pygame.quit()
-                sys.exit()
+                pygame.quit(); sys.exit()
             elif event.type == pygame.KEYDOWN:
-                if   event.key == pygame.K_ESCAPE:  pygame.quit(); sys.exit()
-                elif event.key == pygame.K_r:        reset_game()
-                elif event.key == pygame.K_UP:       attempt_move(-1,  0)
-                elif event.key == pygame.K_DOWN:     attempt_move( 1,  0)
-                elif event.key == pygame.K_LEFT:     attempt_move( 0, -1)
-                elif event.key == pygame.K_RIGHT:    attempt_move( 0,  1)
+                if   event.key == pygame.K_ESCAPE: pygame.quit(); sys.exit()
+                elif event.key == pygame.K_r:       reset_game()
+                elif event.key == pygame.K_UP:      attempt_move(-1,  0)
+                elif event.key == pygame.K_DOWN:    attempt_move( 1,  0)
+                elif event.key == pygame.K_LEFT:    attempt_move( 0, -1)
+                elif event.key == pygame.K_RIGHT:   attempt_move( 0,  1)
 
-        if bit_flash  > 0: bit_flash  -= 1
-        if wall_flash > 0: wall_flash -= 1
+        if bit_flash    > 0: bit_flash    -= 1
+        if wall_flash   > 0: wall_flash   -= 1
+        if clk_blocked  > 0: clk_blocked  -= 1
 
         # ── Render ────────────────────────────────────────────────────────
         screen.fill(BG)
+        draw_bit_panel()                              # Zone 1 — top
+        draw_clock_panel()                            # Zone 2 left — clock
+        screen.blit(maze_surf, (MAZE_OX, MAZE_OY))   # Zone 2 right — maze walls
+        draw_path_trail()                             # red trail
+        draw_goal()                                   # pulsing exit
+        draw_turtle(player[0], player[1])             # avatar
 
-        draw_bit_panel()                               # Zone 1
-
-        screen.blit(maze_surf, (MAZE_OX, MAZE_OY))    # Zone 2: circuit walls
-        draw_path_trail()                              # red trail
-        draw_goal()                                    # pulsing exit + text
-        draw_turtle(player[0], player[1])              # avatar
-
-        if wall_flash > 0:
-            draw_wall_flash()                          # red flash on collision
-
-        if won:
-            draw_win()                                 # victory overlay
+        if wall_flash  > 0: draw_wall_flash()
+        if clk_blocked > 0: draw_clock_blocked_overlay()
+        if won:             draw_win()
 
         pygame.display.flip()
 
