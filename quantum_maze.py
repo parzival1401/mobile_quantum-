@@ -91,6 +91,9 @@ F_MED   = _f(18)
 F_SM    = _f(14)
 F_XSM   = _f(11, bold=False)
 
+# Pre-render 0%–100% labels once — eliminates font.render() every frame
+_PROB_LABELS = [F_SM.render(f"{i}%", True, (220, 110, 255)) for i in range(101)]
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Layout
 # ─────────────────────────────────────────────────────────────────────────────
@@ -305,6 +308,7 @@ move_target    = None
 chosen_dir      = None
 visible_paths   = []
 visible_weights = []   # FOV-centre weight for each path in visible_paths
+visible_probs   = []   # 0-100 int % for each path (cached, avoids recompute in render)
 no_paths_flash  = 0
 tick            = 0
 
@@ -330,6 +334,7 @@ def reset():
     chosen_dir      = None
     visible_paths   = []
     visible_weights = []
+    visible_probs   = []
     no_paths_flash  = 0
 
 
@@ -388,10 +393,9 @@ def draw_panels():
 # Draw — FOV cone
 # ─────────────────────────────────────────────────────────────────────────────
 def draw_fov_cone(cx, cy, angle_deg, fov_deg, radius):
-    _overlay.fill((0, 0, 0, 0))
     start_a = math.radians(angle_deg - fov_deg / 2)
     end_a   = math.radians(angle_deg + fov_deg / 2)
-    steps   = 28
+    steps   = 20
     pts = [(cx, cy)]
     for i in range(steps + 1):
         a = start_a + (end_a - start_a) * i / steps
@@ -402,7 +406,6 @@ def draw_fov_cone(cx, cy, angle_deg, fov_deg, radius):
                          (cx, cy),
                          (cx + int(math.cos(edge) * radius),
                           cy + int(math.sin(edge) * radius)), 1)
-    screen.blit(_overlay, (0, 0))
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Draw — path preview (dim ghost of onward passages beyond each visible path)
@@ -414,7 +417,6 @@ def draw_path_preview(r, c, paths, t):
     """
     depth = get_fov_depth()
     pulse = 0.35 + 0.25 * math.sin(t * 0.09)
-    _overlay.fill((0, 0, 0, 0))
     pr, pg, pb = PREVIEW_C
 
     # BFS: frontier = list of (from_r, from_c, to_r, to_c)
@@ -474,8 +476,6 @@ def draw_path_preview(r, c, paths, t):
         if not frontier:
             break
 
-    screen.blit(_overlay, (0, 0))
-
 # ─────────────────────────────────────────────────────────────────────────────
 # Draw — superposition paths
 # ─────────────────────────────────────────────────────────────────────────────
@@ -486,7 +486,6 @@ def draw_superposition_paths(r, c, paths, t, raw_weights, probs):
     """
     cx, cy = cell_cx(c), cell_cy(r)
     pulse  = 0.5 + 0.5 * math.sin(t * 0.13)
-    _overlay.fill((0, 0, 0, 0))
     sr, sg, sb = SUPER_C
 
     max_w = max(raw_weights) if raw_weights else 1.0
@@ -504,11 +503,8 @@ def draw_superposition_paths(r, c, paths, t, raw_weights, probs):
                          (cx, cy), (nx, ny), 2)
 
         mx_, my_ = (cx + nx) // 2, (cy + ny) // 2
-        v        = int(220 * pulse * (0.4 + 0.6 * w))
-        lbl      = F_SM.render(f"{probs[i]}%", True, (v, v // 3, v))
+        lbl = _PROB_LABELS[probs[i]]
         _overlay.blit(lbl, (mx_ - lbl.get_width() // 2, my_ - lbl.get_height() // 2 - 2))
-
-    screen.blit(_overlay, (0, 0))
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Draw — collapse flash
@@ -518,16 +514,14 @@ def draw_collapse_flash(r, c, chosen, timer):
     dr, dc, _, _ = DIRS[chosen]
     nx, ny       = cell_cx(c + dc), cell_cy(r + dr)
     t            = timer / COLLAPSE_FRAMES
-    _overlay.fill((0, 0, 0, 0))
     pygame.draw.line(_overlay, (*COLLAPSE_C, int(255 * t)),
                      (cx, cy), (nx, ny), max(2, int(18 * t)))
     pygame.draw.line(_overlay, (255, 255, 255, int(190 * t)),
                      (cx, cy), (nx, ny), 2)
-    screen.blit(_overlay, (0, 0))
     mx_, my_ = (cx + nx) // 2, (cy + ny) // 2
     lbl = F_SM.render("COLLAPSED!", True, COLLAPSE_C)
     lbl.set_alpha(int(255 * t))
-    screen.blit(lbl, (mx_ - lbl.get_width() // 2, my_ - 22))
+    _overlay.blit(lbl, (mx_ - lbl.get_width() // 2, my_ - 22))
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Draw — character
@@ -595,7 +589,7 @@ def draw_no_path_warning(flash):
 def main():
     global char_r, char_c, char_angle, state, collapse_timer
     global move_progress, move_target, chosen_dir
-    global visible_paths, visible_weights
+    global visible_paths, visible_weights, visible_probs
     global no_paths_flash, tick, visited_cells, visited_surf
 
     while True:
@@ -611,11 +605,11 @@ def main():
                 elif event.key == pygame.K_SPACE and state == STATE_ROTATING:
                     paths = get_visible_paths(char_r, char_c, char_angle, get_fov_deg())
                     if paths:
-                        raw, _  = path_weights(paths, char_angle, get_fov_deg())
-                        # Weighted collapse: path more centred in FOV = more likely chosen
-                        chosen_dir     = random.choices(paths, weights=raw, k=1)[0]
-                        visible_paths  = paths
+                        raw, probs = path_weights(paths, char_angle, get_fov_deg())
+                        chosen_dir      = random.choices(paths, weights=raw, k=1)[0]
+                        visible_paths   = paths
                         visible_weights = raw
+                        visible_probs   = probs
                         state          = STATE_COLLAPSING
                         collapse_timer = COLLAPSE_FRAMES
                     else:
@@ -627,8 +621,10 @@ def main():
         if state == STATE_ROTATING:
             char_angle    = (char_angle + get_rotate_speed()) % 360
             visible_paths = get_visible_paths(char_r, char_c, char_angle, get_fov_deg())
-            visible_weights, _ = path_weights(visible_paths, char_angle, get_fov_deg()) \
-                                 if visible_paths else ([], [])
+            if visible_paths:
+                visible_weights, visible_probs = path_weights(visible_paths, char_angle, get_fov_deg())
+            else:
+                visible_weights, visible_probs = [], []
             if no_paths_flash > 0:
                 no_paths_flash -= 1
 
@@ -652,6 +648,7 @@ def main():
                 state           = STATE_ROTATING
                 visible_paths   = []
                 visible_weights = []
+                visible_probs   = []
 
         # ── Render ────────────────────────────────────────────────────────
         screen.fill(BG)
@@ -668,16 +665,16 @@ def main():
             px = int(px + (cell_cx(tc) - px) * te)
             py = int(py + (cell_cy(tr) - py) * te)
 
+        _overlay.fill((0, 0, 0, 0))
         draw_fov_cone(cell_cx(char_c), cell_cy(char_r),
                       char_angle, get_fov_deg(), get_fov_radius())
-
         if state == STATE_ROTATING and visible_paths:
-            _, probs = path_weights(visible_paths, char_angle, get_fov_deg())
             draw_path_preview(char_r, char_c, visible_paths, tick)
             draw_superposition_paths(char_r, char_c, visible_paths, tick,
-                                     visible_weights, probs)
+                                     visible_weights, visible_probs)
         elif state == STATE_COLLAPSING and chosen_dir is not None:
             draw_collapse_flash(char_r, char_c, chosen_dir, collapse_timer)
+        screen.blit(_overlay, (0, 0))
 
         draw_character(px, py, char_angle)
 
