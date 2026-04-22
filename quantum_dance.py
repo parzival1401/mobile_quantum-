@@ -12,16 +12,47 @@ classical and quantum behaviour:
   QUANTUM notes    — appear as ghosts in TWO lanes simultaneously
                      (superposition), connected by a glowing wave.
                      As they approach the hit zone they COLLAPSE to ONE
-                     lane at random (50 / 50).  Only then do you know
-                     which key to press.
+                     lane.  The BIAS slider controls which lane wins.
 
 Controls
 --------
   ←  Left lane       ↓  Centre-left lane
   ↑  Centre-right    →  Right lane
   Drag sliders with the mouse to change game parameters
+  [  /  ]   Nudge BIAS slider left / right by 5%
+  \\         Reset BIAS to 50% (true superposition)
   ESC  quit
+
+Hardware
+--------
+  Any device that sends [ ] \\ keystrokes (rotary encoder, physical
+  buttons via Arduino HID) will control the BIAS slider automatically.
+
+  To read a potentiometer via serial port instead, search for the
+  "SERIAL PORT HOOK" comment block below and uncomment it.
 """
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SERIAL PORT HOOK  (hardware potentiometer → BIAS slider)
+# ─────────────────────────────────────────────────────────────────────────────
+# Uncomment the block below to read bias from an Arduino sending lines like
+# "73\n" (0-100 integer) over USB serial.  Replace "COM3" / "/dev/ttyUSB0"
+# with your port.  The background thread updates bias_serial_val each frame.
+#
+# import threading, serial as _serial
+# bias_serial_val = None
+# def _serial_reader():
+#     global bias_serial_val
+#     try:
+#         with _serial.Serial("/dev/ttyUSB0", 9600, timeout=1) as port:
+#             while True:
+#                 line = port.readline().decode(errors="ignore").strip()
+#                 if line.isdigit():
+#                     bias_serial_val = max(0, min(100, int(line)))
+#     except Exception:
+#         pass
+# threading.Thread(target=_serial_reader, daemon=True).start()
+# ─────────────────────────────────────────────────────────────────────────────
 
 import pygame
 import sys
@@ -64,6 +95,7 @@ LANE_C = [
 SL_SPAWN_C    = ( 80, 200, 255)   # cyan-blue
 SL_SPEED_C    = ( 80, 255, 160)   # mint-green
 SL_COLLAPSE_C = (210,  70, 255)   # purple (matches quantum)
+SL_BIAS_C     = (255, 180,  60)   # amber/gold — bias control
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Fonts
@@ -229,9 +261,10 @@ _SL_H   = LANE_BOT - _SL_Y - 80  # track height  (≈ 482 px)
 # Left panel  — one slider centred in 224 px
 _CX_SPAWN    = LX0 // 2                         # ≈ 112
 
-# Right panel — two sliders side by side inside 224 px
-_CX_SPEED    = RP_X + RP_W * 1 // 3            # ≈ 811
-_CX_COLLAPSE = RP_X + RP_W * 2 // 3            # ≈ 885
+# Right panel — three sliders evenly spaced inside 224 px
+_CX_SPEED    = RP_X + RP_W * 1 // 4            # ≈ 792
+_CX_COLLAPSE = RP_X + RP_W * 2 // 4            # ≈ 848
+_CX_BIAS     = RP_X + RP_W * 3 // 4            # ≈ 904
 
 spawn_slider = Slider(
     cx=_CX_SPAWN, y_top=_SL_Y, height=_SL_H,
@@ -265,7 +298,16 @@ collapse_slider = Slider(
           "↓ surprise!"),
 )
 
-ALL_SLIDERS = [spawn_slider, speed_slider, collapse_slider]
+bias_slider = Slider(
+    cx=_CX_BIAS, y_top=_SL_Y, height=_SL_H,
+    min_val=0, max_val=100, init_val=50,
+    title="BIAS",
+    value_fmt="{:.0f}%",
+    color=SL_BIAS_C,
+    desc=("collapse bias", "↑ favors lane 1", "↓ favors lane 2"),
+)
+
+ALL_SLIDERS = [spawn_slider, speed_slider, collapse_slider, bias_slider]
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -285,6 +327,11 @@ def get_spawn_interval() -> int:
     """Base frame interval between note spawns (fewer frames = faster)."""
     # spawn_slider.val 1→10 maps to interval 210→25 frames
     return max(25, int(215 - spawn_slider.val * 19.5))
+
+
+def get_collapse_bias() -> float:
+    """Probability (0.0–1.0) that a quantum note collapses to its primary lane."""
+    return bias_slider.val / 100.0
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -329,7 +376,8 @@ class Note:
         if self.quantum and not self.collapsed and self.y >= get_collapse_y():
             self.collapsed      = True
             self.just_collapsed = True
-            self.final_lane     = random.choice([self.lane, self.lane2])
+            self.final_lane     = (self.lane if random.random() < get_collapse_bias()
+                                   else self.lane2)
             self.dropped_lane   = (self.lane2 if self.final_lane == self.lane
                                    else self.lane)
             self.lane = self.final_lane
@@ -669,9 +717,11 @@ def draw_bottom():
     pygame.draw.rect(screen, (10, 8, 26), (0, y0, SW, BOT_H))
     pygame.draw.line(screen, (55, 45, 100), (0, y0), (SW, y0))
 
+    pct  = int(bias_slider.val)
+    bias_txt = f"⬡  Quantum  — 2 lanes, collapses {pct}% lane 1 / {100 - pct}% lane 2"
     for i, (txt, col) in enumerate([
         ("■  Classical — stays in its lane", WHITE),
-        ("⬡  Quantum  — 2 lanes, collapses 50/50", Q_PURPLE),
+        (bias_txt, SL_BIAS_C),
     ]):
         screen.blit(F_SM.render(txt, True, col), (18, y0 + 12 + i * 22))
 
@@ -695,6 +745,12 @@ def main():
             elif event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_ESCAPE:
                     pygame.quit(); sys.exit()
+                elif event.key == pygame.K_LEFTBRACKET:
+                    bias_slider.val = max(0.0,   bias_slider.val - 5.0)
+                elif event.key == pygame.K_RIGHTBRACKET:
+                    bias_slider.val = min(100.0, bias_slider.val + 5.0)
+                elif event.key == pygame.K_BACKSLASH:
+                    bias_slider.val = 50.0
                 for i, k in enumerate(KEYS):
                     if event.key == k:
                         handle_key(i)
@@ -702,6 +758,10 @@ def main():
             # Pass all mouse events to sliders
             for sl in ALL_SLIDERS:
                 sl.handle_event(event)
+
+        # Apply serial port bias if the hardware hook is active
+        # if bias_serial_val is not None:
+        #     bias_slider.val = float(bias_serial_val)
 
         update()
 
