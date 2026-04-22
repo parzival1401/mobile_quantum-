@@ -28,8 +28,12 @@ Sliders
 Controls
 --------
   SPACE  —  collapse & move
-  R      —  new maze
   ESC    —  quit
+
+Probability note
+----------------
+  Paths more centred in the FOV have a higher chance of being chosen.
+  A path at the cone's edge is nearly impossible; one dead-centre is most likely.
 """
 
 import pygame
@@ -90,7 +94,7 @@ F_XSM   = _f(11, bold=False)
 # ─────────────────────────────────────────────────────────────────────────────
 COLS   = 21        # maze columns  — 21 × 21 gives a dense complex maze
 ROWS   = 21
-CELL   = 28        # pixels per cell
+CELL   = 20        # pixels per cell  (≈30% smaller than original 28)
 
 MAZE_W = COLS * CELL    # 588
 MAZE_H = ROWS * CELL    # 588
@@ -195,57 +199,37 @@ def get_rotate_speed(): return speed_slider.val
 def get_fov_deg():      return fov_slider.val
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Maze generation — iterative backtracker → adjacency matrix
+# Fixed maze — pre-computed adjacency matrix (21 × 21)
+# adj[r][c] = set of open direction indices  {0=E, 1=S, 2=W, 3=N}
+# Generated once with seed=42 + 12% loop ratio; never changes at runtime.
 # ─────────────────────────────────────────────────────────────────────────────
-def generate_adj(rows, cols, sr, sc):
-    """
-    Iterative recursive-backtracker.
-    Returns adj[r][c] = set of open direction indices.
-    Using a stack avoids Python recursion-limit issues on large grids.
-    """
-    visited = [[False] * cols for _ in range(rows)]
-    adj     = [[set() for _ in range(cols)] for _ in range(rows)]
+_MAZE_RAW = [
+    [[0,1],[0,2],[0,2],[0,2],[0,1,2],[0,2],[2],[0,1],[1,2],[0,1],[0,1,2],[0,2],[0,2],[0,1,2],[1,2],[0],[0,2],[0,2],[0,1,2],[1,2],[1]],
+    [[1,3],[1],[0,1],[1,2],[0,3],[0,2],[0,2],[2,3],[1,3],[1,3],[0,3],[0,2],[0,2],[1,2,3],[0,3],[0,2],[0,2],[0,2],[0,2,3],[1,2,3],[1,3]],
+    [[1,3],[1,3],[1,3],[0,3],[0,2],[1,2],[0,1],[0,2],[2,3],[1,3],[0,1],[0,2],[1,2],[1,3],[0,1],[0,1,2],[0,1,2],[1,2],[1],[0,3],[1,2,3]],
+    [[0,1,3],[1,2,3],[0,3],[0,1,2],[1,2],[0,1,3],[2,3],[0,1],[0,2],[0,2,3],[2,3],[0],[2,3],[0,3],[2,3],[0,3],[1,2,3],[0,1,3],[0,1,2,3],[0,1,2],[2,3]],
+    [[1,3],[0,1,3],[0,1,2],[2,3],[1,3],[3],[0,1],[2,3],[1],[0,1],[0,2],[0,2],[0,2],[1,2],[0,1],[1,2],[3],[1,3],[1,3],[0,3],[1,2]],
+    [[1,3],[0,3],[1,2,3],[0,1],[2,3],[0,1],[0,2,3],[0,2],[0,2,3],[1,2,3],[0,1],[0,1,2],[1,2],[0,3],[2,3],[1,3],[0,1],[2,3],[0,3],[0,1,2],[1,2,3]],
+    [[0,1,3],[0,2],[0,2,3],[0,2,3],[0,2],[2,3],[0,1],[0,2],[0,2],[2,3],[3],[1,3],[1,3],[0,1],[1,2],[0,3],[2,3],[0,1],[0,1,2],[1,2,3],[1,3]],
+    [[0,1,3],[0,2],[0,2],[0,2],[1,2],[0,1],[2,3],[0,1],[0,2],[0,2],[0,2],[2,3],[3],[1,3],[0,3],[0,1,2],[0,2],[2,3],[0,3],[1,2,3],[1,3]],
+    [[0,1,3],[0,1,2],[0,1,2],[2],[0,3],[0,1,2,3],[0,2],[0,2,3],[0,1,2],[0,2],[0,2],[0,2],[0,2],[0,2,3],[2],[0,3],[1,2],[0,1],[0,2],[0,2,3],[2,3]],
+    [[1,3],[1,3],[0,3],[0,1,2],[2],[1,3],[0,1],[0,1,2],[1,2,3],[0,1],[0,1,2],[0,2],[1,2],[0,1],[0,1,2],[1,2],[0,1,3],[0,2,3],[0,2],[1,2],[1]],
+    [[1,3],[0,1,3],[1,2],[0,1,3],[0,2],[2,3],[1,3],[0,1,3],[1,2,3],[1,3],[0,3],[0,1,2],[2,3],[1,3],[1,3],[0,3],[0,2,3],[1,2],[0],[1,2,3],[1,3]],
+    [[1,3],[0,1,3],[1,2,3],[1,3],[0],[1,2],[0,3],[1,2,3],[0,3],[2,3],[0,1],[0,2,3],[0,1,2],[1,2,3],[0,1,3],[0,2],[1,2],[0,1,3],[1,2],[1,3],[1,3]],
+    [[0,1,3],[2,3],[1,3],[0,3],[0,2],[0,1,2,3],[1,2],[0,3],[0,2],[0,2],[2,3],[0,1],[0,2,3],[1,2,3],[3],[0,1],[0,2,3],[0,2,3],[1,2,3],[0,3],[1,2,3]],
+    [[0,1,3],[0,1,2],[0,2,3],[0,1,2],[1,2],[0,3],[0,1,2,3],[0,1,2],[1,2],[0],[0,1,2],[0,2,3],[0,2],[2,3],[0,1],[2,3],[0,1],[0,2],[1,2,3],[0,1],[2,3]],
+    [[1,3],[1,3],[0,1],[2,3],[0,3],[0,2],[1,2,3],[0,1,3],[0,2,3],[0,1,2],[0,2,3],[0,2],[2],[0,1],[0,2,3],[0,2],[2,3],[0],[1,2,3],[0,3],[1,2]],
+    [[1,3],[0,1,3],[0,2,3],[1,2],[0],[0,1,2],[1,2,3],[1,3],[0],[2,3],[0,1],[0,2],[1,2],[0,3],[0,2],[1,2],[0,1],[0,1,2],[2,3],[0,1],[2,3]],
+    [[1,3],[0,3],[0,2],[1,2,3],[0,1],[0,2,3],[1,2,3],[0,3],[0,2],[0,2],[2,3],[0,1],[1,2,3],[0,1],[0,1,2],[1,2,3],[1,3],[0,3],[1,2],[1,3],[1]],
+    [[1,3],[0,1],[0,2],[0,1,2,3],[2,3],[1],[0,3],[1,2],[0,1],[1,2],[0,1],[1,2,3],[0,1,3],[2,3],[3],[1,3],[3],[0,1],[2,3],[0,3],[1,2,3]],
+    [[1,3],[1,3],[0,1],[1,2,3],[0,1],[0,2,3],[1,2],[0,3],[2,3],[1,3],[1,3],[1,3],[1,3],[0,1],[0,2],[2,3],[0,1],[1,2,3],[0,1],[0,2],[2,3]],
+    [[1,3],[0,3],[2,3],[1,3],[1,3],[0],[0,2,3],[0,2],[0,2],[0,2,3],[0,1,2,3],[0,1,2,3],[2,3],[0,1,3],[0,1,2],[0,1,2],[1,2,3],[3],[1,3],[0],[1,2]],
+    [[0,3],[0,2],[0,2],[2,3],[0,3],[0,2],[0,2],[0,2],[0,2],[0,2],[2,3],[0,3],[0,2],[2,3],[0,3],[2,3],[0,3],[0,2],[0,2,3],[0,2],[2,3]],
+]
 
-    stack = [(sr, sc)]
-    visited[sr][sc] = True
-
-    while stack:
-        r, c = stack[-1]
-        # Collect unvisited neighbours in random order
-        nbrs = []
-        for d in range(4):
-            dr, dc, _, _ = DIRS[d]
-            nr, nc = r + dr, c + dc
-            if 0 <= nr < rows and 0 <= nc < cols and not visited[nr][nc]:
-                nbrs.append((d, nr, nc))
-        if nbrs:
-            d, nr, nc = random.choice(nbrs)
-            adj[r][c].add(d)
-            adj[nr][nc].add((d + 2) % 4)
-            visited[nr][nc] = True
-            stack.append((nr, nc))
-        else:
-            stack.pop()
-
-    return adj
-
-
-def add_loops(adj, rows, cols, ratio=0.12):
-    """Open a fraction of closed internal walls to create alternative routes."""
-    candidates = []
-    for r in range(rows):
-        for c in range(cols):
-            for d in (0, 1):          # E and S only — avoids double-counting
-                if d not in adj[r][c]:
-                    dr, dc, _, _ = DIRS[d]
-                    nr, nc = r + dr, c + dc
-                    if 0 <= nr < rows and 0 <= nc < cols:
-                        candidates.append((r, c, d, nr, nc))
-    random.shuffle(candidates)
-    for r, c, d, nr, nc in candidates[:max(3, int(len(candidates) * ratio))]:
-        adj[r][c].add(d)
-        adj[nr][nc].add((d + 2) % 4)
-    return adj
+def build_adj_from_raw(raw):
+    """Convert the hardcoded list-of-lists into adj[r][c] = set(...)."""
+    return [[set(raw[r][c]) for c in range(COLS)] for r in range(ROWS)]
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Pre-rendered surfaces
@@ -319,21 +303,20 @@ COLLAPSE_FRAMES = 35
 move_progress  = 0.0
 MOVE_FRAMES    = 24
 move_target    = None
-chosen_dir     = None
-visible_paths  = []
-no_paths_flash = 0
-tick           = 0
+chosen_dir      = None
+visible_paths   = []
+visible_weights = []   # FOV-centre weight for each path in visible_paths
+no_paths_flash  = 0
+tick            = 0
 
 
 def reset():
     global adj, maze_surf, visited_surf
     global char_r, char_c, char_angle, visited_cells
     global state, collapse_timer, move_progress, move_target
-    global chosen_dir, visible_paths, no_paths_flash
+    global chosen_dir, visible_paths, visible_weights, no_paths_flash
 
-    a = generate_adj(ROWS, COLS, ROWS // 2, COLS // 2)
-    adj = add_loops(a, ROWS, COLS)
-
+    adj        = build_adj_from_raw(_MAZE_RAW)
     maze_surf  = build_maze_surface(adj, ROWS, COLS, CELL)
 
     char_r, char_c = ROWS // 2, COLS // 2
@@ -345,9 +328,10 @@ def reset():
     collapse_timer = 0
     move_progress  = 0.0
     move_target    = None
-    chosen_dir     = None
-    visible_paths  = []
-    no_paths_flash = 0
+    chosen_dir      = None
+    visible_paths   = []
+    visible_weights = []
+    no_paths_flash  = 0
 
 
 reset()
@@ -367,6 +351,23 @@ def angle_in_fov(dir_angle, view_angle, fov):
 def get_visible_paths(r, c, view_angle, fov):
     """O(4) lookup: iterate adj[r][c] only (max 4 directions)."""
     return [d for d in adj[r][c] if angle_in_fov(DIRS[d][2], view_angle, fov)]
+
+
+def fov_weight(dir_angle, view_angle, fov):
+    """
+    Linear weight: 1.0 when the path is dead-centre in the FOV, 0.0 at the edges.
+    A path that barely enters the cone has near-zero probability of being chosen.
+    """
+    diff = abs((dir_angle - view_angle + 180) % 360 - 180)
+    return max(0.0, 1.0 - diff / (fov / 2))
+
+
+def path_weights(paths, view_angle, fov):
+    """Return raw weights and normalised probabilities (0-100 int %) for display."""
+    raw   = [fov_weight(DIRS[d][2], view_angle, fov) for d in paths]
+    total = sum(raw) or 1.0
+    probs = [int(round(w / total * 100)) for w in raw]
+    return raw, probs
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Draw — panels
@@ -444,28 +445,40 @@ def draw_path_preview(r, c, paths, t):
 # ─────────────────────────────────────────────────────────────────────────────
 # Draw — superposition paths
 # ─────────────────────────────────────────────────────────────────────────────
-def draw_superposition_paths(r, c, paths, t):
+def draw_superposition_paths(r, c, paths, t, raw_weights, probs):
+    """
+    Draw each visible path with glow intensity scaled by its FOV weight.
+    Show the collapse probability % so visitors can see the bias live.
+    """
     cx, cy = cell_cx(c), cell_cy(r)
     pulse  = 0.5 + 0.5 * math.sin(t * 0.13)
     surf   = pygame.Surface((SW, SH), pygame.SRCALPHA)
     sr, sg, sb = SUPER_C
 
-    for d in paths:
+    # Normalise weights to [0,1] for brightness scaling
+    max_w = max(raw_weights) if raw_weights else 1.0
+
+    for i, d in enumerate(paths):
         dr, dc, _, _ = DIRS[d]
         nx, ny = cell_cx(c + dc), cell_cy(r + dr)
-        at = int(140 * pulse)
+
+        # Scale glow by how centred this path is in the FOV
+        w    = raw_weights[i] / max_w if max_w > 0 else 1.0
+        at   = int(140 * pulse * (0.35 + 0.65 * w))   # dim paths at FOV edge
         # Outer glow
         pygame.draw.line(surf, (sr // 2, sg // 2, sb // 2, at // 2),
-                         (cx, cy), (nx, ny), 20)
+                         (cx, cy), (nx, ny), int(20 * w + 8))
         # Bright core
-        pygame.draw.line(surf, (sr, sg, sb, at), (cx, cy), (nx, ny), 8)
-        pygame.draw.line(surf, (255, 200, 255, int(min(255, 200 * pulse))),
+        pygame.draw.line(surf, (sr, sg, sb, at), (cx, cy), (nx, ny), int(8 * w + 3))
+        pygame.draw.line(surf, (255, 200, 255, int(min(255, 200 * pulse * w))),
                          (cx, cy), (nx, ny), 2)
-        # "?" at midpoint
+
+        # Probability label at midpoint (bright = more likely, dim = less likely)
         mx_, my_ = (cx + nx) // 2, (cy + ny) // 2
-        v   = int(180 * pulse)
-        lbl = F_SM.render("?", True, (v, v // 3, v))
-        surf.blit(lbl, (mx_ - lbl.get_width() // 2, my_ - lbl.get_height() // 2))
+        pct_str  = f"{probs[i]}%"
+        v        = int(220 * pulse * (0.4 + 0.6 * w))
+        lbl      = F_SM.render(pct_str, True, (v, v // 3, v))
+        surf.blit(lbl, (mx_ - lbl.get_width() // 2, my_ - lbl.get_height() // 2 - 2))
 
     screen.blit(surf, (0, 0))
 
@@ -531,7 +544,7 @@ def draw_bottom(n_visited):
     pygame.draw.rect(screen, PANEL_BG, (0, y0, SW, BOT_H))
     pygame.draw.line(screen, (55, 45, 100), (0, y0), (SW, y0))
     lines = [
-        ("■ purple = superposition paths   ■ green ghost = preview beyond   ■ SPACE = collapse   ■ R = new maze", DIM),
+        ("■ purple = superposition paths   brighter = higher probability   ■ green ghost = preview beyond   ■ SPACE = collapse", DIM),
         ("Quantum: a particle exists in ALL states at once — it only picks one when MEASURED", (110, 55, 170)),
     ]
     for i, (txt, col) in enumerate(lines):
@@ -553,7 +566,8 @@ def draw_no_path_warning(flash):
 # ─────────────────────────────────────────────────────────────────────────────
 def main():
     global char_r, char_c, char_angle, state, collapse_timer
-    global move_progress, move_target, chosen_dir, visible_paths
+    global move_progress, move_target, chosen_dir
+    global visible_paths, visible_weights
     global no_paths_flash, tick, visited_cells, visited_surf
 
     while True:
@@ -566,13 +580,14 @@ def main():
             elif event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_ESCAPE:
                     pygame.quit(); sys.exit()
-                elif event.key == pygame.K_r:
-                    reset(); tick = 0
                 elif event.key == pygame.K_SPACE and state == STATE_ROTATING:
                     paths = get_visible_paths(char_r, char_c, char_angle, get_fov_deg())
                     if paths:
-                        chosen_dir     = random.choice(paths)
+                        raw, _  = path_weights(paths, char_angle, get_fov_deg())
+                        # Weighted collapse: path more centred in FOV = more likely chosen
+                        chosen_dir     = random.choices(paths, weights=raw, k=1)[0]
                         visible_paths  = paths
+                        visible_weights = raw
                         state          = STATE_COLLAPSING
                         collapse_timer = COLLAPSE_FRAMES
                     else:
@@ -584,6 +599,8 @@ def main():
         if state == STATE_ROTATING:
             char_angle    = (char_angle + get_rotate_speed()) % 360
             visible_paths = get_visible_paths(char_r, char_c, char_angle, get_fov_deg())
+            visible_weights, _ = path_weights(visible_paths, char_angle, get_fov_deg()) \
+                                 if visible_paths else ([], [])
             if no_paths_flash > 0:
                 no_paths_flash -= 1
 
@@ -601,26 +618,25 @@ def main():
                 char_r, char_c = move_target
                 if (char_r, char_c) not in visited_cells:
                     visited_cells.add((char_r, char_c))
-                    visited_surf = build_visited_surface(visited_cells)   # rebuild only on change
-                move_target    = None
-                move_progress  = 0.0
-                state          = STATE_ROTATING
-                visible_paths  = []
+                    visited_surf = build_visited_surface(visited_cells)
+                move_target     = None
+                move_progress   = 0.0
+                state           = STATE_ROTATING
+                visible_paths   = []
+                visible_weights = []
 
         # ── Render ────────────────────────────────────────────────────────
         screen.fill(BG)
         draw_panels()
 
-        # Pre-rendered maze + visited overlay (single blit each)
         screen.blit(maze_surf,    (MX0, MY0))
         screen.blit(visited_surf, (MX0, MY0))
 
-        # Interpolated character position while moving
         px = cell_cx(char_c)
         py = cell_cy(char_r)
         if state == STATE_MOVING and move_target:
             tr, tc = move_target
-            te = move_progress ** 2 * (3 - 2 * move_progress)   # ease-in-out
+            te = move_progress ** 2 * (3 - 2 * move_progress)
             px = int(px + (cell_cx(tc) - px) * te)
             py = int(py + (cell_cy(tr) - py) * te)
 
@@ -628,8 +644,10 @@ def main():
                       char_angle, get_fov_deg(), FOV_RADIUS)
 
         if state == STATE_ROTATING and visible_paths:
+            _, probs = path_weights(visible_paths, char_angle, get_fov_deg())
             draw_path_preview(char_r, char_c, visible_paths, tick)
-            draw_superposition_paths(char_r, char_c, visible_paths, tick)
+            draw_superposition_paths(char_r, char_c, visible_paths, tick,
+                                     visible_weights, probs)
         elif state == STATE_COLLAPSING and chosen_dir is not None:
             draw_collapse_flash(char_r, char_c, chosen_dir, collapse_timer)
 
