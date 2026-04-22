@@ -48,9 +48,11 @@ pygame.init()
 # ─────────────────────────────────────────────────────────────────────────────
 SW, SH = 960, 760
 FPS    = 60
-screen = pygame.display.set_mode((SW, SH))
+screen   = pygame.display.set_mode((SW, SH))
 pygame.display.set_caption("Quantum Maze  |  Quantum Exhibition")
-clk    = pygame.time.Clock()
+clk      = pygame.time.Clock()
+# Pre-allocated transparent overlay — reused every frame (avoids per-frame Surface alloc)
+_overlay = pygame.Surface((SW, SH), pygame.SRCALPHA)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Colours
@@ -112,7 +114,7 @@ DIRS = [
     (-1,  0, 270, "N"),   # 3
 ]
 
-FOV_RADIUS = int(CELL * 1.4)   # reach just past the adjacent cell
+# get_fov_radius() is defined after sliders (needs get_fov_depth)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Vertical Slider
@@ -182,21 +184,32 @@ class Slider:
 # ─────────────────────────────────────────────────────────────────────────────
 # Slider instances
 # ─────────────────────────────────────────────────────────────────────────────
-_SL_Y  = MY0 + 58
-_SL_H  = MAZE_H - 148
-_CX_SP = MX0 // 2                               # 93  — left panel centre
-_CX_FV = MX0 + MAZE_W + (SW - MX0 - MAZE_W) // 2  # 867 — right panel centre
+_SL_Y   = MY0 + 58
+_SL_H   = MAZE_H - 148
+_RP_X   = MX0 + MAZE_W          # right panel x-start
+_RP_W   = SW - _RP_X            # right panel width
 
-speed_slider = Slider(_CX_SP, _SL_Y, _SL_H, 0.3, 4.5, 1.4,
+_CX_SP    = MX0 // 2                    # left panel centre
+_CX_FV    = _RP_X + _RP_W * 1 // 3     # right panel, 1st slot
+_CX_DEPTH = _RP_X + _RP_W * 2 // 3     # right panel, 2nd slot
+
+SL_DEPTH_C = (100, 180, 255)    # sky-blue for depth slider
+
+speed_slider = Slider(_CX_SP, _SL_Y, _SL_H, 0.5, 8.0, 3.0,
                       "SPEED", "{:.1f}", SL_SPEED_C,
                       ("°/frame", "↑ faster", "↓ slower"))
-fov_slider   = Slider(_CX_FV, _SL_Y, _SL_H, 25,  180, 100,
+fov_slider   = Slider(_CX_FV,    _SL_Y, _SL_H, 25,  180, 100,
                       "FOV",   "{:.0f}°", SL_FOV_C,
-                      ("field of view", "↑ wider", "↓ narrower"))
-ALL_SLIDERS  = [speed_slider, fov_slider]
+                      ("cone width", "↑ wider", "↓ narrower"))
+depth_slider = Slider(_CX_DEPTH, _SL_Y, _SL_H, 1,   3,   1,
+                      "DEPTH", "{:.0f}", SL_DEPTH_C,
+                      ("cells deep", "↑ see further", "↓ just next"))
+ALL_SLIDERS  = [speed_slider, fov_slider, depth_slider]
 
 def get_rotate_speed(): return speed_slider.val
 def get_fov_deg():      return fov_slider.val
+def get_fov_depth():    return max(1, int(round(depth_slider.val)))
+def get_fov_radius():   return int(CELL * 1.4 * get_fov_depth())
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Fixed maze — pre-computed adjacency matrix (21 × 21)
@@ -368,14 +381,14 @@ def draw_panels():
     rp_w = SW - rp_x
     pygame.draw.rect(screen, PANEL_BG, (rp_x, MY0, rp_w, MAZE_H))
     pygame.draw.line(screen, (40, 32, 72), (rp_x, MY0), (rp_x, MY0 + MAZE_H), 1)
-    t2 = F_XSM.render("FIELD OF VIEW", True, (60, 55, 90))
+    t2 = F_XSM.render("FOV  |  DEPTH", True, (60, 55, 90))
     screen.blit(t2, (rp_x + rp_w // 2 - t2.get_width() // 2, MY0 + 8))
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Draw — FOV cone
 # ─────────────────────────────────────────────────────────────────────────────
 def draw_fov_cone(cx, cy, angle_deg, fov_deg, radius):
-    surf    = pygame.Surface((SW, SH), pygame.SRCALPHA)
+    _overlay.fill((0, 0, 0, 0))
     start_a = math.radians(angle_deg - fov_deg / 2)
     end_a   = math.radians(angle_deg + fov_deg / 2)
     steps   = 28
@@ -383,50 +396,85 @@ def draw_fov_cone(cx, cy, angle_deg, fov_deg, radius):
     for i in range(steps + 1):
         a = start_a + (end_a - start_a) * i / steps
         pts.append((cx + math.cos(a) * radius, cy + math.sin(a) * radius))
-    pygame.draw.polygon(surf, (*FOV_C, 24), pts)
+    pygame.draw.polygon(_overlay, (*FOV_C, 24), pts)
     for edge in (start_a, end_a):
-        pygame.draw.line(surf, (*FOV_C, 65),
+        pygame.draw.line(_overlay, (*FOV_C, 65),
                          (cx, cy),
                          (cx + int(math.cos(edge) * radius),
                           cy + int(math.sin(edge) * radius)), 1)
-    screen.blit(surf, (0, 0))
+    screen.blit(_overlay, (0, 0))
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Draw — path preview (dim ghost of onward passages beyond each visible path)
 # ─────────────────────────────────────────────────────────────────────────────
 def draw_path_preview(r, c, paths, t):
+    """
+    Draw ghost previews up to get_fov_depth() cells ahead.
+    Each level is dimmer than the previous.
+    """
+    depth = get_fov_depth()
     pulse = 0.35 + 0.25 * math.sin(t * 0.09)
-    surf  = pygame.Surface((SW, SH), pygame.SRCALPHA)
+    _overlay.fill((0, 0, 0, 0))
     pr, pg, pb = PREVIEW_C
 
+    # BFS: frontier = list of (from_r, from_c, to_r, to_c)
+    frontier = []
     for d in paths:
         dr, dc, _, _ = DIRS[d]
         nr, nc = r + dr, c + dc
-        ncx, ncy = cell_cx(nc), cell_cy(nr)
+        if 0 <= nr < ROWS and 0 <= nc < COLS:
+            frontier.append((r, c, nr, nc))
 
-        # Subtle cell frame at the destination
-        rx = MX0 + nc * CELL + 4
-        ry = MY0 + nr * CELL + 4
-        pygame.draw.rect(surf, (pr // 3, pg // 3, pb // 3, int(32 * pulse)),
-                         (rx, ry, CELL - 8, CELL - 8), border_radius=3)
-        pygame.draw.rect(surf, (pr // 2, pg // 2, pb // 2, int(50 * pulse)),
-                         (rx, ry, CELL - 8, CELL - 8), 1, border_radius=3)
+    seen = {(r, c)}
 
-        # Ghost lines for every open passage from the neighbour (except way back)
-        back = (d + 2) % 4
-        for nd in adj[nr][nc]:
-            if nd == back:
+    for level in range(1, depth + 1):
+        alpha_scale = 0.7 ** (level - 1)   # each hop is dimmer
+        next_frontier = []
+
+        for fr, fc, nr, nc in frontier:
+            if (nr, nc) in seen:
                 continue
-            ndr, ndc, _, _ = DIRS[nd]
-            nnr, nnc = nr + ndr, nc + ndc
-            if 0 <= nnr < ROWS and 0 <= nnc < COLS:
-                alpha = int(75 * pulse)
-                pygame.draw.line(surf, (pr, pg, pb, alpha),
-                                 (ncx, ncy), (cell_cx(nnc), cell_cy(nnr)), 4)
-                pygame.draw.line(surf, (200, 255, 220, alpha // 2),
-                                 (ncx, ncy), (cell_cx(nnc), cell_cy(nnr)), 1)
+            seen.add((nr, nc))
+            ncx, ncy = cell_cx(nc), cell_cy(nr)
 
-    screen.blit(surf, (0, 0))
+            # Cell highlight box
+            rx = MX0 + nc * CELL + 4
+            ry = MY0 + nr * CELL + 4
+            pygame.draw.rect(_overlay,
+                             (pr // 3, pg // 3, pb // 3,
+                              int(32 * pulse * alpha_scale)),
+                             (rx, ry, CELL - 8, CELL - 8), border_radius=3)
+            pygame.draw.rect(_overlay,
+                             (pr // 2, pg // 2, pb // 2,
+                              int(50 * pulse * alpha_scale)),
+                             (rx, ry, CELL - 8, CELL - 8), 1, border_radius=3)
+
+            # Ghost lines for onward passages (skip the way back)
+            back = DIRS.index(next((d for d in DIRS
+                                    if d[0] == nr - fr and d[1] == nc - fc),
+                                   DIRS[0]))
+            back_opp = (back + 2) % 4
+            for nd in adj[nr][nc]:
+                if nd == back_opp:
+                    continue
+                ndr, ndc, _, _ = DIRS[nd]
+                nnr, nnc = nr + ndr, nc + ndc
+                if 0 <= nnr < ROWS and 0 <= nnc < COLS:
+                    alpha = int(75 * pulse * alpha_scale)
+                    pygame.draw.line(_overlay, (pr, pg, pb, alpha),
+                                     (ncx, ncy),
+                                     (cell_cx(nnc), cell_cy(nnr)), 4)
+                    pygame.draw.line(_overlay,
+                                     (200, 255, 220, alpha // 2),
+                                     (ncx, ncy),
+                                     (cell_cx(nnc), cell_cy(nnr)), 1)
+                    next_frontier.append((nr, nc, nnr, nnc))
+
+        frontier = next_frontier
+        if not frontier:
+            break
+
+    screen.blit(_overlay, (0, 0))
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Draw — superposition paths
@@ -438,35 +486,29 @@ def draw_superposition_paths(r, c, paths, t, raw_weights, probs):
     """
     cx, cy = cell_cx(c), cell_cy(r)
     pulse  = 0.5 + 0.5 * math.sin(t * 0.13)
-    surf   = pygame.Surface((SW, SH), pygame.SRCALPHA)
+    _overlay.fill((0, 0, 0, 0))
     sr, sg, sb = SUPER_C
 
-    # Normalise weights to [0,1] for brightness scaling
     max_w = max(raw_weights) if raw_weights else 1.0
 
     for i, d in enumerate(paths):
         dr, dc, _, _ = DIRS[d]
         nx, ny = cell_cx(c + dc), cell_cy(r + dr)
 
-        # Scale glow by how centred this path is in the FOV
         w    = raw_weights[i] / max_w if max_w > 0 else 1.0
-        at   = int(140 * pulse * (0.35 + 0.65 * w))   # dim paths at FOV edge
-        # Outer glow
-        pygame.draw.line(surf, (sr // 2, sg // 2, sb // 2, at // 2),
+        at   = int(140 * pulse * (0.35 + 0.65 * w))
+        pygame.draw.line(_overlay, (sr // 2, sg // 2, sb // 2, at // 2),
                          (cx, cy), (nx, ny), int(20 * w + 8))
-        # Bright core
-        pygame.draw.line(surf, (sr, sg, sb, at), (cx, cy), (nx, ny), int(8 * w + 3))
-        pygame.draw.line(surf, (255, 200, 255, int(min(255, 200 * pulse * w))),
+        pygame.draw.line(_overlay, (sr, sg, sb, at), (cx, cy), (nx, ny), int(8 * w + 3))
+        pygame.draw.line(_overlay, (255, 200, 255, int(min(255, 200 * pulse * w))),
                          (cx, cy), (nx, ny), 2)
 
-        # Probability label at midpoint (bright = more likely, dim = less likely)
         mx_, my_ = (cx + nx) // 2, (cy + ny) // 2
-        pct_str  = f"{probs[i]}%"
         v        = int(220 * pulse * (0.4 + 0.6 * w))
-        lbl      = F_SM.render(pct_str, True, (v, v // 3, v))
-        surf.blit(lbl, (mx_ - lbl.get_width() // 2, my_ - lbl.get_height() // 2 - 2))
+        lbl      = F_SM.render(f"{probs[i]}%", True, (v, v // 3, v))
+        _overlay.blit(lbl, (mx_ - lbl.get_width() // 2, my_ - lbl.get_height() // 2 - 2))
 
-    screen.blit(surf, (0, 0))
+    screen.blit(_overlay, (0, 0))
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Draw — collapse flash
@@ -476,16 +518,16 @@ def draw_collapse_flash(r, c, chosen, timer):
     dr, dc, _, _ = DIRS[chosen]
     nx, ny       = cell_cx(c + dc), cell_cy(r + dr)
     t            = timer / COLLAPSE_FRAMES
-    surf         = pygame.Surface((SW, SH), pygame.SRCALPHA)
-    pygame.draw.line(surf, (*COLLAPSE_C, int(255 * t)),
+    _overlay.fill((0, 0, 0, 0))
+    pygame.draw.line(_overlay, (*COLLAPSE_C, int(255 * t)),
                      (cx, cy), (nx, ny), max(2, int(18 * t)))
-    pygame.draw.line(surf, (255, 255, 255, int(190 * t)),
+    pygame.draw.line(_overlay, (255, 255, 255, int(190 * t)),
                      (cx, cy), (nx, ny), 2)
+    screen.blit(_overlay, (0, 0))
     mx_, my_ = (cx + nx) // 2, (cy + ny) // 2
     lbl = F_SM.render("COLLAPSED!", True, COLLAPSE_C)
     lbl.set_alpha(int(255 * t))
-    surf.blit(lbl, (mx_ - lbl.get_width() // 2, my_ - 22))
-    screen.blit(surf, (0, 0))
+    screen.blit(lbl, (mx_ - lbl.get_width() // 2, my_ - 22))
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Draw — character
@@ -627,7 +669,7 @@ def main():
             py = int(py + (cell_cy(tr) - py) * te)
 
         draw_fov_cone(cell_cx(char_c), cell_cy(char_r),
-                      char_angle, get_fov_deg(), FOV_RADIUS)
+                      char_angle, get_fov_deg(), get_fov_radius())
 
         if state == STATE_ROTATING and visible_paths:
             _, probs = path_weights(visible_paths, char_angle, get_fov_deg())
