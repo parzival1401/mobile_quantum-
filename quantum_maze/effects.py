@@ -52,10 +52,10 @@ class _Particle:
 
     def _color(self):
         t  = self.age / PARTICLE_LIFETIME
-        r  = int(PARTICLE_C_START[0] + (PARTICLE_C_END[0] - PARTICLE_C_START[0]) * t)
-        g  = int(PARTICLE_C_START[1] + (PARTICLE_C_END[1] - PARTICLE_C_START[1]) * t)
-        b  = int(PARTICLE_C_START[2] + (PARTICLE_C_END[2] - PARTICLE_C_START[2]) * t)
-        a  = int(255 * (1.0 - t))
+        r  = max(0, min(255, int(PARTICLE_C_START[0] + (PARTICLE_C_END[0] - PARTICLE_C_START[0]) * t)))
+        g  = max(0, min(255, int(PARTICLE_C_START[1] + (PARTICLE_C_END[1] - PARTICLE_C_START[1]) * t)))
+        b  = max(0, min(255, int(PARTICLE_C_START[2] + (PARTICLE_C_END[2] - PARTICLE_C_START[2]) * t)))
+        a  = max(0, min(255, int(255 * (1.0 - t))))
         return r, g, b, a
 
     def draw(self, surf, temp):
