@@ -5,6 +5,7 @@ Run with:  python main.py   (from inside quantum_maze/)
 
 import sys
 import math
+import random
 import pygame
 from enum import Enum, auto
 
@@ -173,8 +174,8 @@ def main():
             _do_collapse()
 
         # ── Trigger quantum jump ──────────────────────────────────────────────
-        if btn.pressed and can_jump and solve_result and solve_result.path:
-            player.start_jump(solve_result.path[-1])
+        if btn.pressed and can_jump and solve_result and solve_result.frontier:
+            player.start_jump(random.choice(solve_result.frontier))
             state = State.JUMPING
 
         # ── Update ────────────────────────────────────────────────────────────

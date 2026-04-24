@@ -51,13 +51,14 @@ class Slider:
     def update(self, dt: float):
         """Call once per frame with delta-time to accumulate/decay collapse risk."""
         self._force_collapse = False
-        if self._drag and self.value > 60:
-            self._collapse_risk = min(1.0, self._collapse_risk + dt * 0.4)
-            if self._collapse_risk >= 1.0:
-                self._collapse_risk  = 0.0
-                self._force_collapse = True
-        elif self.value <= 60:
-            self._collapse_risk = max(0.0, self._collapse_risk - dt * 0.2)
+        brightness = self.value / 100.0          # 0.0 (dark) → 1.0 (fully bright)
+        rate = brightness ** 2 * 2.0             # near-zero when dark, fast when bright
+        self._collapse_risk = min(1.0, self._collapse_risk + dt * rate)
+        if self._collapse_risk >= 1.0:
+            self._collapse_risk  = 0.0
+            self._force_collapse = True
+        if self.value == 0:
+            self._collapse_risk = max(0.0, self._collapse_risk - dt * 0.5)
 
     # ── Events ────────────────────────────────────────────────────────────────
     def _val_to_x(self, v):
