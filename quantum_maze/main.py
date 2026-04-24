@@ -13,6 +13,7 @@ import lighting
 import effects as fx
 import ui
 from player import Player
+from ray_solver import RaySolver, SolveResult, draw_ray
 from settings import (
     SW, SH, GAME_H, HUD_H, FPS, WINDOW_TITLE,
     BG, WALL_C, FLOOR_C, EXIT_C,
@@ -87,6 +88,7 @@ def main():
     # Game objects
     mz         = maze_mod.generate(DEFAULT_SEED)
     maze_surf  = _build_maze_surf(mz)
+    solver     = RaySolver(mz)
     player     = Player()
     particles  = fx.ParticleSystem()
     flash      = fx.ScreenFlash()
@@ -103,19 +105,23 @@ def main():
     elapsed        = 0.0
     next_seed      = DEFAULT_SEED + 1
     collapse_timer = 0.0
-    lit_cells: list = []
-    ray_endpoint   = (player.px, player.py)
+    lit_cells: list    = []
+    solve_result: SolveResult | None = None
 
     while True:
         dt = min(clock.tick(FPS) / 1000.0, 0.05)
 
-        # ── Mouse ray angle ───────────────────────────────────────────────────
+        # ── Mouse ray angle (for fog-of-war only) ────────────────────────────
         mx, my    = pygame.mouse.get_pos()
         angle_rad = math.atan2(my - player.py, mx - player.px)
 
-        # ── Cast ray (every frame while playing/collapsing) ───────────────────
+        # ── BFS ray solve (every frame) ───────────────────────────────────────
+        solve_result = solver.solve(
+            (player.row, player.col), EXIT_CELL, slider.depth)
+
+        # ── Fog cast ray (for ambient reveal, unchanged) ──────────────────────
         if state in (State.PLAYING, State.COLLAPSING, State.JUMPING):
-            lit_cells, ray_endpoint = lighting.cast_ray(
+            lit_cells, _ = lighting.cast_ray(
                 (player.px, player.py), angle_rad, mz)
 
         # ── Events ────────────────────────────────────────────────────────────
@@ -134,6 +140,7 @@ def main():
                     # Full restart
                     mz = maze_mod.generate(DEFAULT_SEED)
                     maze_surf = _build_maze_surf(mz)
+                    solver    = RaySolver(mz)
                     player    = Player()
                     particles.clear()
                     state          = State.PLAYING
@@ -144,10 +151,16 @@ def main():
             slider.handle_event(event)
             btn.handle_event(event, can_jump)
 
-        # ── Trigger collapse ──────────────────────────────────────────────────
-        if slider.changed and state == State.PLAYING:
+        # ── Slider risk accumulation ──────────────────────────────────────────
+        slider.update(dt)
+
+        # ── Trigger collapse (risk-based) ─────────────────────────────────────
+        def _do_collapse():
+            nonlocal mz, maze_surf, solver, next_seed, collapse_count
+            nonlocal state, collapse_timer
             mz = maze_mod.generate(next_seed)
             maze_surf = _build_maze_surf(mz)
+            solver    = RaySolver(mz)
             next_seed += 1
             collapse_count += 1
             player.snap_to_cell(player.row, player.col)
@@ -156,9 +169,12 @@ def main():
             state          = State.COLLAPSING
             collapse_timer = FLASH_DURATION
 
+        if slider.force_collapse and state == State.PLAYING:
+            _do_collapse()
+
         # ── Trigger quantum jump ──────────────────────────────────────────────
-        if btn.pressed and can_jump:
-            player.start_jump(ray_endpoint)
+        if btn.pressed and can_jump and solve_result and solve_result.path:
+            player.start_jump(solve_result.path[-1])
             state = State.JUMPING
 
         # ── Update ────────────────────────────────────────────────────────────
@@ -202,13 +218,19 @@ def main():
         screen.blit(maze_surf, (MAZE_X0, MAZE_Y0))
         _draw_exit(screen, t_now, exit_glow)
 
-        # Player + particles
-        player.draw(screen)
+        # Particles (below fog)
         particles.draw(screen)
 
-        # Fog + ray
+        # Fog (ambient hole + geometric fog reveal)
         lighting.render(screen, fog_surf, ray_surf, ambient_surf,
                         (player.px, player.py), angle_rad, mz, lit_cells)
+
+        # BFS ray — on top of fog, below player
+        if solve_result:
+            draw_ray(screen, solve_result, CELL)
+
+        # Player — on top of everything
+        player.draw(screen)
 
         # Screen effects (flash, scanlines)
         flash.draw(screen)

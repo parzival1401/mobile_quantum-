@@ -28,12 +28,38 @@ def _init_fonts():
 # ── Slider ────────────────────────────────────────────────────────────────────
 class Slider:
     def __init__(self, x, y, width):
-        self._rect  = pygame.Rect(x, y - 10, width, 20)
-        self._track = pygame.Rect(x, y - 3, width, 6)
-        self.value  = 0          # 0 … 100
-        self._drag  = False
-        self.changed = False     # True for exactly the frame a change occurs
+        self._rect   = pygame.Rect(x, y - 10, width, 20)
+        self._track  = pygame.Rect(x, y - 3,  width, 6)
+        self.value   = 0          # 0 … 100
+        self._drag   = False
+        self.changed = False      # True for exactly the frame a change occurs
 
+        self._collapse_risk  = 0.0   # 0.0 … 1.0
+        self._force_collapse = False
+
+    # ── Depth mapping ─────────────────────────────────────────────────────────
+    @property
+    def depth(self) -> int:
+        """BFS depth limit 1–20 mapped from slider value 0–100."""
+        return max(1, int(self.value / 5))
+
+    # ── Collapse risk ─────────────────────────────────────────────────────────
+    @property
+    def force_collapse(self) -> bool:
+        return self._force_collapse
+
+    def update(self, dt: float):
+        """Call once per frame with delta-time to accumulate/decay collapse risk."""
+        self._force_collapse = False
+        if self._drag and self.value > 60:
+            self._collapse_risk = min(1.0, self._collapse_risk + dt * 0.4)
+            if self._collapse_risk >= 1.0:
+                self._collapse_risk  = 0.0
+                self._force_collapse = True
+        elif self.value <= 60:
+            self._collapse_risk = max(0.0, self._collapse_risk - dt * 0.2)
+
+    # ── Events ────────────────────────────────────────────────────────────────
     def _val_to_x(self, v):
         return self._rect.x + int(v / 100 * self._rect.width)
 
@@ -62,21 +88,38 @@ class Slider:
 
     def draw(self, surface):
         _init_fonts()
-        lbl = _F_LABEL.render("OBSERVATION LEVEL", True, SLIDER_LABEL_C)
+        depth_val = self.depth
+        lbl = _F_LABEL.render(f"RAY DEPTH  {depth_val:2d} / 20", True, SLIDER_LABEL_C)
         surface.blit(lbl, (self._rect.x, self._rect.y - 16))
 
         # Track
         pygame.draw.rect(surface, SLIDER_TRACK_C, self._track, border_radius=3)
         fill_w = int(self.value / 100 * self._track.width)
         if fill_w > 0:
-            pygame.draw.rect(surface, (0, 100, 140),
+            track_col = (180, 60, 30) if self.value > 60 else (0, 100, 140)
+            pygame.draw.rect(surface, track_col,
                              (self._track.x, self._track.y, fill_w, self._track.height),
                              border_radius=3)
+
+        # Collapse risk bar (thin red bar below track)
+        if self._collapse_risk > 0:
+            risk_w = int(self._collapse_risk * self._track.width)
+            risk_y = self._track.bottom + 3
+            pygame.draw.rect(surface, (180, 30, 30),
+                             (self._track.x, risk_y, risk_w, 3))
+            # Warning label when risk is building
+            if self._collapse_risk > 0.3:
+                intensity = int(255 * self._collapse_risk)
+                warn = _F_LABEL.render("! COLLAPSE RISK", True,
+                                       (intensity, 30, 30))
+                surface.blit(warn, (self._track.right - warn.get_width(),
+                                    risk_y + 5))
 
         # Handle
         hx = self._val_to_x(self.value)
         cy = self._track.centery
-        pygame.draw.circle(surface, (0, 70, 110), (hx, cy), 13)
+        handle_col = (130, 50, 20) if self.value > 60 else (0, 70, 110)
+        pygame.draw.circle(surface, handle_col,       (hx, cy), 13)
         pygame.draw.circle(surface, SLIDER_HANDLE_C,  (hx, cy), 9)
         pygame.draw.circle(surface, (200, 245, 255),  (hx, cy), 3)
 

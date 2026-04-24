@@ -65,13 +65,14 @@ class Player:
         return False
 
     # ── Quantum jump ─────────────────────────────────────────────────────────
-    def start_jump(self, endpoint_px: tuple):
-        tx = max(MAZE_X0, min(MAZE_X0 + COLS * CELL - 1, endpoint_px[0]))
-        ty = max(MAZE_Y0, min(MAZE_Y0 + ROWS * CELL - 1, endpoint_px[1]))
-        self.row = (ty - MAZE_Y0) // CELL
-        self.col = (tx - MAZE_X0) // CELL
+    def start_jump(self, target_cell: tuple):
+        """Jump to a maze cell (r, c) from SolveResult.path[-1]."""
+        r, c = target_cell
+        self.row = max(0, min(ROWS - 1, r))
+        self.col = max(0, min(COLS - 1, c))
+        cx, cy = _cell_center(self.row, self.col)
         self._jump_from = (self._px, self._py)
-        self._jump_to   = (float(tx), float(ty))
+        self._jump_to   = (float(cx), float(cy))
         self._jump_t    = 0.0
         self.is_jumping = True
 
