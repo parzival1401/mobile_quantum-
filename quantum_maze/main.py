@@ -10,7 +10,6 @@ import pygame
 from enum import Enum, auto
 
 import maze as maze_mod
-import lighting
 import effects as fx
 import ui
 from player import Player
@@ -22,7 +21,6 @@ from settings import (
     N, W,
     EXIT_CELL, START_CELL,
     EXIT_BASE_RADIUS, EXIT_PULSE_RANGE, EXIT_PULSE_FREQ,
-    AMBIENT_RADIUS,
     FLASH_DURATION, JUMP_COOLDOWN,
     DEFAULT_SEED,
 )
@@ -80,9 +78,6 @@ def main():
     clock  = pygame.time.Clock()
 
     # Pre-allocated surfaces
-    fog_surf     = pygame.Surface((SW, GAME_H), pygame.SRCALPHA)
-    ray_surf     = pygame.Surface((SW, GAME_H), pygame.SRCALPHA)
-    ambient_surf = lighting.make_ambient(AMBIENT_RADIUS)
     gr           = EXIT_BASE_RADIUS * 3
     exit_glow    = pygame.Surface((gr * 2, gr * 2), pygame.SRCALPHA)
 
@@ -106,24 +101,14 @@ def main():
     elapsed        = 0.0
     next_seed      = DEFAULT_SEED + 1
     collapse_timer = 0.0
-    lit_cells: list    = []
     solve_result: SolveResult | None = None
 
     while True:
         dt = min(clock.tick(FPS) / 1000.0, 0.05)
 
-        # ── Mouse ray angle (for fog-of-war only) ────────────────────────────
-        mx, my    = pygame.mouse.get_pos()
-        angle_rad = math.atan2(my - player.py, mx - player.px)
-
         # ── BFS ray solve (every frame) ───────────────────────────────────────
         solve_result = solver.solve(
             (player.row, player.col), EXIT_CELL, slider.depth)
-
-        # ── Fog cast ray (for ambient reveal, unchanged) ──────────────────────
-        if state in (State.PLAYING, State.COLLAPSING, State.JUMPING):
-            lit_cells, _ = lighting.cast_ray(
-                (player.px, player.py), angle_rad, mz)
 
         # ── Events ────────────────────────────────────────────────────────────
         can_jump = (state == State.PLAYING and
@@ -219,14 +204,10 @@ def main():
         screen.blit(maze_surf, (MAZE_X0, MAZE_Y0))
         _draw_exit(screen, t_now, exit_glow)
 
-        # Particles (below fog)
+        # Particles
         particles.draw(screen)
 
-        # Fog (ambient hole + geometric fog reveal)
-        lighting.render(screen, fog_surf, ray_surf, ambient_surf,
-                        (player.px, player.py), angle_rad, mz, lit_cells)
-
-        # BFS ray — on top of fog, below player
+        # BFS ray — below player
         if solve_result:
             draw_ray(screen, solve_result, CELL)
 
