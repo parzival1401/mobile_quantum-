@@ -91,9 +91,11 @@ def main():
     scanlines  = fx.ScanlineStatic()
 
     # HUD widgets — vertically centred inside HUD strip
-    hud_cy = GAME_H + HUD_H // 2
-    slider  = ui.Slider(x=24, y=hud_cy, width=260)
-    btn     = ui.QuantumJumpButton(x=SW - 244, y=hud_cy - 20, width=236, height=40)
+    hud_cy      = GAME_H + HUD_H // 2
+    slider      = ui.Slider(x=24, y=hud_cy - 12, width=200)
+    speed_sl    = ui.CollapseSpeedSlider(x=24, y=hud_cy + 22, width=200)
+    toggle      = ui.Toggle(x=238, y=hud_cy + 5, label="COLLAPSE", init=True)
+    btn         = ui.QuantumJumpButton(x=SW - 244, y=hud_cy - 20, width=236, height=40)
 
     # State
     state          = State.PLAYING
@@ -135,10 +137,12 @@ def main():
                     next_seed      = DEFAULT_SEED + 1
 
             slider.handle_event(event)
+            speed_sl.handle_event(event)
+            toggle.handle_event(event)
             btn.handle_event(event, can_jump)
 
         # ── Slider risk accumulation ──────────────────────────────────────────
-        slider.update(dt)
+        slider.update(dt, toggle.on, speed_sl.rate)
 
         # ── Trigger collapse (risk-based) ─────────────────────────────────────
         def _do_collapse():
@@ -221,7 +225,9 @@ def main():
         # HUD
         ui.draw_hud(screen, collapse_count, elapsed)
         cooldown_frac = 1.0 - player.jump_cooldown / JUMP_COOLDOWN
-        slider.draw(screen)
+        slider.draw(screen, toggle.on)
+        speed_sl.draw(screen, toggle.on)
+        toggle.draw(screen)
         btn.draw(screen, cooldown_frac, can_jump)
 
         # Win overlay

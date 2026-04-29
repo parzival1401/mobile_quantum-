@@ -1,4 +1,4 @@
-"""Slider widget, quantum jump button, HUD strip, win overlay."""
+"""Slider widget, toggle switch, quantum jump button, HUD strip, win overlay."""
 
 import pygame
 from settings import (
@@ -25,6 +25,44 @@ def _init_fonts():
     _F_SM    = pygame.font.SysFont('monospace', 15)
 
 
+# ── Toggle switch ─────────────────────────────────────────────────────────────
+class Toggle:
+    def __init__(self, x: int, y: int, label: str, init: bool = True):
+        self._x     = x
+        self._y     = y
+        self._label = label
+        self.on     = init
+        # clickable area: pill (36 wide) + some padding
+        self._rect  = pygame.Rect(x, y - 8, 36, 18)
+
+    def handle_event(self, event):
+        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+            if self._rect.collidepoint(event.pos):
+                self.on = not self.on
+
+    def draw(self, surface):
+        _init_fonts()
+        x, y = self._x, self._y
+        w, h = 36, 16
+        r    = h // 2
+
+        bg_col  = (0, 140, 80) if self.on else (60, 30, 30)
+        pygame.draw.rect(surface, bg_col,    (x, y - r, w, h), border_radius=r)
+        pygame.draw.rect(surface, (80, 80, 120), (x, y - r, w, h), 1, border_radius=r)
+
+        # Knob
+        knob_x = x + w - r - 2 if self.on else x + r + 2
+        pygame.draw.circle(surface, (220, 240, 255), (knob_x, y), r - 3)
+
+        lbl = _F_LABEL.render(self._label, True, SLIDER_LABEL_C)
+        surface.blit(lbl, (x + w + 6, y - lbl.get_height() // 2))
+
+        state_txt = _F_LABEL.render("ON" if self.on else "OFF", True,
+                                    (0, 200, 120) if self.on else (160, 60, 60))
+        surface.blit(state_txt, (x - state_txt.get_width() - 4,
+                                 y - state_txt.get_height() // 2))
+
+
 # ── Slider ────────────────────────────────────────────────────────────────────
 class Slider:
     def __init__(self, x, y, width):
@@ -32,27 +70,33 @@ class Slider:
         self._track  = pygame.Rect(x, y - 3,  width, 6)
         self.value   = 0          # 0 … 100
         self._drag   = False
-        self.changed = False      # True for exactly the frame a change occurs
+        self.changed = False
 
-        self._collapse_risk  = 0.0   # 0.0 … 1.0
+        self._collapse_risk  = 0.0
         self._force_collapse = False
 
-    # ── Depth mapping ─────────────────────────────────────────────────────────
+    # ── Depth mapping — 1–35 ─────────────────────────────────────────────────
     @property
     def depth(self) -> int:
-        """BFS depth limit 1–20 mapped from slider value 0–100."""
-        return max(1, int(self.value / 5))
+        """BFS depth limit 1–35 mapped from slider value 0–100."""
+        return max(1, round(self.value / 100 * 35))
 
     # ── Collapse risk ─────────────────────────────────────────────────────────
     @property
     def force_collapse(self) -> bool:
         return self._force_collapse
 
-    def update(self, dt: float):
-        """Call once per frame with delta-time to accumulate/decay collapse risk."""
+    def update(self, dt: float, collapse_enabled: bool, collapse_rate: float):
+        """
+        collapse_enabled: if False, risk never accumulates.
+        collapse_rate: multiplier from the speed slider (0.25 – 4.0).
+        """
         self._force_collapse = False
-        brightness = self.value / 100.0          # 0.0 (dark) → 1.0 (fully bright)
-        rate = brightness ** 2 * 2.0             # near-zero when dark, fast when bright
+        if not collapse_enabled:
+            self._collapse_risk = 0.0
+            return
+        brightness = self.value / 100.0
+        rate = brightness ** 2 * 2.0 * collapse_rate
         self._collapse_risk = min(1.0, self._collapse_risk + dt * rate)
         if self._collapse_risk >= 1.0:
             self._collapse_risk  = 0.0
@@ -87,13 +131,12 @@ class Slider:
             self.value = self._x_to_val(event.pos[0])
             self.changed = self.value != prev
 
-    def draw(self, surface):
+    def draw(self, surface, collapse_enabled: bool = True):
         _init_fonts()
         depth_val = self.depth
-        lbl = _F_LABEL.render(f"RAY DEPTH  {depth_val:2d} / 20", True, SLIDER_LABEL_C)
+        lbl = _F_LABEL.render(f"RAY DEPTH  {depth_val:2d} / 35", True, SLIDER_LABEL_C)
         surface.blit(lbl, (self._rect.x, self._rect.y - 16))
 
-        # Track
         pygame.draw.rect(surface, SLIDER_TRACK_C, self._track, border_radius=3)
         fill_w = int(self.value / 100 * self._track.width)
         if fill_w > 0:
@@ -102,27 +145,87 @@ class Slider:
                              (self._track.x, self._track.y, fill_w, self._track.height),
                              border_radius=3)
 
-        # Collapse risk bar (thin red bar below track)
-        if self._collapse_risk > 0:
+        # Collapse risk bar (only shown when collapse is enabled)
+        if collapse_enabled and self._collapse_risk > 0:
             risk_w = int(self._collapse_risk * self._track.width)
             risk_y = self._track.bottom + 3
             pygame.draw.rect(surface, (180, 30, 30),
                              (self._track.x, risk_y, risk_w, 3))
-            # Warning label when risk is building
             if self._collapse_risk > 0.3:
                 intensity = int(255 * self._collapse_risk)
-                warn = _F_LABEL.render("! COLLAPSE RISK", True,
-                                       (intensity, 30, 30))
-                surface.blit(warn, (self._track.right - warn.get_width(),
-                                    risk_y + 5))
+                warn = _F_LABEL.render("! COLLAPSE RISK", True, (intensity, 30, 30))
+                surface.blit(warn, (self._track.right - warn.get_width(), risk_y + 5))
 
-        # Handle
         hx = self._val_to_x(self.value)
         cy = self._track.centery
         handle_col = (130, 50, 20) if self.value > 60 else (0, 70, 110)
         pygame.draw.circle(surface, handle_col,       (hx, cy), 13)
         pygame.draw.circle(surface, SLIDER_HANDLE_C,  (hx, cy), 9)
         pygame.draw.circle(surface, (200, 245, 255),  (hx, cy), 3)
+
+
+# ── Collapse speed slider ─────────────────────────────────────────────────────
+class CollapseSpeedSlider:
+    """Controls how fast collapse risk accumulates. Range 0.25× – 4.0×."""
+
+    _MIN = 0.25
+    _MAX = 4.0
+
+    def __init__(self, x, y, width):
+        self._rect  = pygame.Rect(x, y - 10, width, 20)
+        self._track = pygame.Rect(x, y - 3,  width, 6)
+        self.value  = 50     # 0–100 maps to _MIN–_MAX
+        self._drag  = False
+
+    @property
+    def rate(self) -> float:
+        """Returns multiplier in range [_MIN, _MAX]."""
+        t = self.value / 100.0
+        return self._MIN + t * (self._MAX - self._MIN)
+
+    def _val_to_x(self, v):
+        return self._rect.x + int(v / 100 * self._rect.width)
+
+    def _x_to_val(self, x):
+        rel = (x - self._rect.x) / max(1, self._rect.width)
+        return int(max(0, min(100, rel * 100)))
+
+    def handle_event(self, event):
+        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+            hx = self._val_to_x(self.value)
+            hr = pygame.Rect(hx - 10, self._rect.centery - 10, 20, 20)
+            if hr.collidepoint(event.pos) or self._track.collidepoint(event.pos):
+                self._drag = True
+                self.value = self._x_to_val(event.pos[0])
+        elif event.type == pygame.MOUSEBUTTONUP and event.button == 1:
+            self._drag = False
+        elif event.type == pygame.MOUSEMOTION and self._drag:
+            self.value = self._x_to_val(event.pos[0])
+
+    def draw(self, surface, enabled: bool = True):
+        _init_fonts()
+        rate_val = self.rate
+        col = SLIDER_LABEL_C if enabled else (60, 60, 90)
+        lbl = _F_LABEL.render(f"COLLAPSE SPEED  {rate_val:.2f}x", True, col)
+        surface.blit(lbl, (self._rect.x, self._rect.y - 16))
+
+        track_col = SLIDER_TRACK_C if enabled else (20, 20, 35)
+        pygame.draw.rect(surface, track_col, self._track, border_radius=3)
+        fill_w = int(self.value / 100 * self._track.width)
+        if fill_w > 0 and enabled:
+            orange = (180, 100, 20)
+            pygame.draw.rect(surface, orange,
+                             (self._track.x, self._track.y, fill_w, self._track.height),
+                             border_radius=3)
+
+        hx = self._val_to_x(self.value)
+        cy = self._track.centery
+        knob_outer = (100, 60, 10) if enabled else (40, 40, 60)
+        knob_inner = (220, 160, 60) if enabled else (80, 80, 100)
+        pygame.draw.circle(surface, knob_outer, (hx, cy), 13)
+        pygame.draw.circle(surface, knob_inner, (hx, cy), 9)
+        pygame.draw.circle(surface, (255, 220, 150) if enabled else (100, 100, 120),
+                           (hx, cy), 3)
 
 
 # ── Quantum Jump Button ───────────────────────────────────────────────────────
@@ -146,7 +249,6 @@ class QuantumJumpButton:
         col_border = BUTTON_FG if can_jump else (30, 60, 80)
         pygame.draw.rect(surface, BUTTON_BG, self.rect, border_radius=6)
 
-        # Cooldown fill bar
         if cooldown_frac < 1.0:
             fw = int(self.rect.width * cooldown_frac)
             pygame.draw.rect(surface, (0, 45, 80),
