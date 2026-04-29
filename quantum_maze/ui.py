@@ -75,11 +75,11 @@ class Slider:
         self._collapse_risk  = 0.0
         self._force_collapse = False
 
-    # ── Depth mapping — 1–35 ─────────────────────────────────────────────────
+    # ── Depth mapping — 1–50 ─────────────────────────────────────────────────
     @property
     def depth(self) -> int:
-        """BFS depth limit 1–35 mapped from slider value 0–100."""
-        return max(1, round(self.value / 100 * 35))
+        """BFS depth limit 1–50 mapped from slider value 0–100."""
+        return max(1, round(self.value / 100 * 50))
 
     # ── Collapse risk ─────────────────────────────────────────────────────────
     @property
@@ -134,7 +134,7 @@ class Slider:
     def draw(self, surface, collapse_enabled: bool = True):
         _init_fonts()
         depth_val = self.depth
-        lbl = _F_LABEL.render(f"RAY DEPTH  {depth_val:2d} / 35", True, SLIDER_LABEL_C)
+        lbl = _F_LABEL.render(f"RAY DEPTH  {depth_val:2d} / 50", True, SLIDER_LABEL_C)
         surface.blit(lbl, (self._rect.x, self._rect.y - 16))
 
         pygame.draw.rect(surface, SLIDER_TRACK_C, self._track, border_radius=3)
