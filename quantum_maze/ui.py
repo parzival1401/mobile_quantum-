@@ -241,8 +241,6 @@ class QuantumJumpButton:
         if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
             if self.rect.collidepoint(event.pos):
                 self.pressed = True
-        elif event.type == pygame.KEYDOWN and event.key == pygame.K_SPACE:
-            self.pressed = True
 
     def draw(self, surface, cooldown_frac: float, can_jump: bool):
         _init_fonts()

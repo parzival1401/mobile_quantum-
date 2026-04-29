@@ -118,6 +118,7 @@ def main():
                     not player.is_moving() and
                     not player.is_jumping)
 
+        space_pressed = False
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 pygame.quit(); sys.exit()
@@ -135,6 +136,8 @@ def main():
                     collapse_count = 0
                     elapsed        = 0.0
                     next_seed      = DEFAULT_SEED + 1
+                if event.key == pygame.K_SPACE:
+                    space_pressed = True
 
             slider.handle_event(event)
             speed_sl.handle_event(event)
@@ -163,7 +166,7 @@ def main():
             _do_collapse()
 
         # ── Trigger quantum jump ──────────────────────────────────────────────
-        if btn.pressed and can_jump and solve_result and solve_result.frontier:
+        if (btn.pressed or space_pressed) and can_jump and solve_result and solve_result.frontier:
             player.start_jump(random.choice(solve_result.frontier))
             state = State.JUMPING
 
