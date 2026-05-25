@@ -3,10 +3,7 @@ quantum_dance.py  —  Quantum Dance
 ====================================
 Quantum Exhibition  |  Classical vs Quantum Computing
 
-MENU
-----
-  1  →  1-player mode  (arrow keys)
-  2  →  2-player mode  (P1: arrows  |  P2: WASD)
+MENU → SONG SELECT → PLAYING
 
 Controls (in-game)
 ------------------
@@ -16,24 +13,22 @@ Controls (in-game)
   \\            Reset BIAS to 50%
   ESC          Return to menu
 
-Music BPM sync
---------------
-  Set SONG_FILE, SONG_BPM, SONG_OFFSET below.
-  Leave SONG_FILE = None for free/slider-driven mode.
-
 Hardware
 --------
   See SERIAL PORT HOOK comment block to wire a potentiometer via USB serial.
 """
 
 # ─────────────────────────────────────────────────────────────────────────────
-# MUSIC CONFIG  — edit these three lines to sync to a song
+# FIXED TIMING CONSTANTS  (overridden at runtime by song selection)
 # ─────────────────────────────────────────────────────────────────────────────
-SONG_FILE      = "music/Alan Walker - Alone.mp3"
-SONG_BPM       = 150.0
-SONG_OFFSET    = 3.0       # seconds of intro silence before first beat
-BEATS_PER_NOTE = 1         # spawn one note every N beats
-BEATS_TO_FALL  = 4         # beats from spawn to hit zone
+BEATS_PER_NOTE = 1    # spawn one note every N beats
+BEATS_TO_FALL  = 4    # base beats from spawn to hit zone (scaled by difficulty)
+
+# Active song settings — set by song select, do not edit directly
+SONG_FILE   = None
+SONG_BPM    = 128.0
+SONG_OFFSET = 0.0
+_active_beats_fall = float(BEATS_TO_FALL)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # SERIAL PORT HOOK  (hardware potentiometer → BIAS slider)
@@ -75,11 +70,13 @@ clk    = pygame.time.Clock()
 # Game state enum
 # ─────────────────────────────────────────────────────────────────────────────
 class GameState(Enum):
-    MENU    = auto()
-    PLAYING = auto()
+    MENU        = auto()
+    SONG_SELECT = auto()
+    PLAYING     = auto()
 
-game_state = GameState.MENU
-n_players  = 1
+game_state    = GameState.MENU
+n_players     = 1
+song_cursor   = 0      # highlighted row in song select screen
 
 # 2P window objects (created only when n_players == 2)
 win2  = None
@@ -107,6 +104,14 @@ LANE_C = [
     (200,  70, 255),   # 3  →  purple
 ]
 
+# P2 classical note palette — warm/distinct so screens are instantly told apart
+LANE_C_P2 = [
+    (255, 100,  80),   # 0  ←  coral-red
+    (255, 200,  50),   # 1  ↓  yellow
+    ( 80, 220, 255),   # 2  ↑  sky-blue
+    (180, 255, 100),   # 3  →  lime-green
+]
+
 SL_SPAWN_C    = ( 80, 200, 255)
 SL_SPEED_C    = ( 80, 255, 160)
 SL_COLLAPSE_C = (210,  70, 255)
@@ -130,6 +135,33 @@ F_MED    = _f(18)
 F_SM     = _f(14)
 F_XSM    = _f(11, bold=False)
 F_ARROW  = _f(26)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Song catalogue  (sourced from music/ddr_songs.txt)
+# ─────────────────────────────────────────────────────────────────────────────
+SONGS = [
+    {"title": "Faded",                  "artist": "Alan Walker",
+     "file": "music/Alan Walker - Faded.mp3",
+     "bpm": 90,  "offset": 0.0, "difficulty": "Easy"},
+    {"title": "Alone",                  "artist": "Alan Walker",
+     "file": "music/Alan Walker - Alone.mp3",
+     "bpm": 150, "offset": 3.0, "difficulty": "Hard"},
+    {"title": "Bad Guy",                "artist": "Billie Eilish",
+     "file": "music/Billie Eilish - bad guy (Lyrics).mp3",
+     "bpm": 135, "offset": 0.0, "difficulty": "Hard"},
+    {"title": "Dynamite",               "artist": "BTS",
+     "file": "music/BTS - Dynamite (Lyrics).mp3",
+     "bpm": 114, "offset": 0.0, "difficulty": "Easy"},
+    {"title": "Can't Stop the Feeling", "artist": "Justin Timberlake",
+     "file": "music/Justin Timberlake - CAN'T STOP THE FEELING! (Lyrics).mp3",
+     "bpm": 113, "offset": 0.0, "difficulty": "Easy"},
+    {"title": "Party Rock Anthem",      "artist": "LMFAO",
+     "file": "music/LMFAO - Party Rock Anthem (Lyrics) ft. Lauren Bennett, GoonRock.mp3",
+     "bpm": 130, "offset": 0.0, "difficulty": "Extreme"},
+]
+
+DIFF_SPEED = {"Easy": 1.0, "Hard": 1.5, "Extreme": 2.0}
+DIFF_COLOR = {"Easy": (80, 220, 120), "Hard": (255, 180, 60), "Extreme": (255, 60, 60)}
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Layout constants
@@ -171,13 +203,13 @@ def lcx(lane): return lx(lane) + LANE_W // 2
 # BPM timing helpers
 # ─────────────────────────────────────────────────────────────────────────────
 def _bpm_fall_speed() -> float:
-    """px/frame for a note to travel FALL_DISTANCE in BEATS_TO_FALL beats."""
-    seconds = BEATS_TO_FALL * 60.0 / SONG_BPM
+    """px/frame for a note to travel FALL_DISTANCE in _active_beats_fall beats."""
+    seconds = _active_beats_fall * 60.0 / SONG_BPM
     return (FALL_DISTANCE / seconds) / FPS
 
 def _bpm_collapse_y() -> int:
     """Collapse 1 beat before the note reaches TARGET_Y."""
-    px_per_beat = (FALL_DISTANCE / (BEATS_TO_FALL * 60.0 / SONG_BPM)) * (60.0 / SONG_BPM)
+    px_per_beat = (FALL_DISTANCE / (_active_beats_fall * 60.0 / SONG_BPM)) * (60.0 / SONG_BPM)
     return int(TARGET_Y - px_per_beat)
 
 
@@ -301,14 +333,10 @@ SLIDERS_BPM  = [spawn_slider, bias_slider]
 
 
 def get_collapse_y() -> int:
-    if SONG_FILE:
-        return _bpm_collapse_y()
-    return int(TARGET_Y - collapse_slider.val)
+    return _bpm_collapse_y() if SONG_FILE else int(TARGET_Y - collapse_slider.val)
 
 def get_fall_speed() -> float:
-    if SONG_FILE:
-        return _bpm_fall_speed()
-    return speed_slider.val
+    return _bpm_fall_speed() if SONG_FILE else speed_slider.val
 
 def get_spawn_interval() -> int:
     return max(25, int(215 - spawn_slider.val * 19.5))
@@ -588,8 +616,9 @@ def draw_hit_zone(surf):
                         TARGET_Y + HIT_ZONE_H // 2 + 5))
 
 
-def draw_classical(surf, note: Note):
-    r, g, b = LANE_C[note.lane]
+def draw_classical(surf, note: Note, player_idx: int = 0):
+    palette = LANE_C if player_idx == 0 else LANE_C_P2
+    r, g, b = palette[note.lane]
     cx      = lcx(note.lane)
     rect    = pygame.Rect(cx - NOTE_W // 2, int(note.y), NOTE_W, NOTE_H)
     pygame.draw.rect(surf, (r // 3, g // 3, b // 3), rect, border_radius=9)
@@ -751,15 +780,91 @@ def draw_menu():
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Song select screen
+# ─────────────────────────────────────────────────────────────────────────────
+def draw_song_select(cursor: int, num_players: int) -> list:
+    """Draw song list; returns list of row rects for click detection."""
+    screen.fill(BG)
+
+    title = F_TITLE.render("✦  SELECT SONG  ✦", True, Q_PURPLE)
+    screen.blit(title, (SW // 2 - title.get_width() // 2, 40))
+
+    mode_lbl = F_MENUSM.render(
+        f"{'1 PLAYER' if num_players == 1 else '2 PLAYERS'}  —  choose a track",
+        True, DIM)
+    screen.blit(mode_lbl, (SW // 2 - mode_lbl.get_width() // 2, 86))
+
+    mx, my = pygame.mouse.get_pos()
+    row_h  = 72
+    row_w  = 720
+    rx0    = (SW - row_w) // 2
+    ry0    = 140
+    rects  = []
+
+    for i, song in enumerate(SONGS):
+        ry     = ry0 + i * row_h
+        rect   = pygame.Rect(rx0, ry, row_w, row_h - 6)
+        hover  = rect.collidepoint(mx, my)
+        active = i == cursor
+
+        fill   = (50, 25, 90) if active else ((30, 15, 60) if hover else (16, 10, 38))
+        border = Q_PURPLE     if active else ((160, 80, 200) if hover else (50, 35, 80))
+        pygame.draw.rect(screen, fill,   rect, border_radius=10)
+        pygame.draw.rect(screen, border, rect, 2 if active else 1, border_radius=10)
+        rects.append(rect)
+
+        # Number
+        num_s = F_MED.render(f"{i + 1}", True, (120, 80, 180) if not active else WHITE)
+        screen.blit(num_s, (rx0 + 18, ry + (row_h - 6 - num_s.get_height()) // 2))
+
+        # Title + artist
+        title_s  = F_MED.render(song["title"],  True, WHITE if active else (200, 190, 230))
+        artist_s = F_SM.render(song["artist"],  True, DIM)
+        screen.blit(title_s,  (rx0 + 50, ry + 8))
+        screen.blit(artist_s, (rx0 + 50, ry + 8 + title_s.get_height()))
+
+        # BPM
+        bpm_s = F_SM.render(f"{song['bpm']} BPM", True, (140, 200, 255))
+        screen.blit(bpm_s, (rx0 + row_w - 210, ry + (row_h - 6 - bpm_s.get_height()) // 2))
+
+        # Difficulty badge
+        diff   = song["difficulty"]
+        dc     = DIFF_COLOR[diff]
+        diff_s = F_SM.render(diff, True, dc)
+        bw, bh = diff_s.get_width() + 16, diff_s.get_height() + 6
+        bx     = rx0 + row_w - bw - 12
+        by_    = ry + (row_h - 6 - bh) // 2
+        pygame.draw.rect(screen, (dc[0] // 5, dc[1] // 5, dc[2] // 5),
+                         (bx, by_, bw, bh), border_radius=6)
+        pygame.draw.rect(screen, dc, (bx, by_, bw, bh), 1, border_radius=6)
+        screen.blit(diff_s, (bx + 8, by_ + 3))
+
+    hint = F_XSM.render("↑↓ navigate     Enter / click to select     ESC back",
+                         True, (70, 60, 100))
+    screen.blit(hint, (SW // 2 - hint.get_width() // 2, ry0 + len(SONGS) * row_h + 10))
+
+    pygame.display.flip()
+    return rects
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Game init / reset
 # ─────────────────────────────────────────────────────────────────────────────
-def start_game(num_players: int):
+def start_game(num_players: int, song: dict):
     global n_players, game_state, p1, p2
     global q_collapsed, q_total, tick, spawn_timer, collapsed_outcomes, last_beat
     global win2, ren2, surf2
+    global SONG_FILE, SONG_BPM, SONG_OFFSET, _active_beats_fall
 
     n_players  = num_players
     game_state = GameState.PLAYING
+
+    # Apply song settings
+    SONG_FILE          = song["file"]
+    SONG_BPM           = float(song["bpm"])
+    SONG_OFFSET        = float(song["offset"])
+    speed_mult         = DIFF_SPEED[song["difficulty"]]
+    _active_beats_fall = max(2.0, BEATS_TO_FALL / speed_mult)
 
     p1 = PlayerState(0, KEYS_P1)
     p2 = PlayerState(1, KEYS_P2) if num_players == 2 else None
@@ -799,11 +904,11 @@ def start_game(num_players: int):
 
 
 def stop_game():
-    global game_state, win2, ren2, surf2
+    global game_state, win2, ren2, surf2, SONG_FILE
     game_state = GameState.MENU
-    if SONG_FILE:
-        try: pygame.mixer.music.stop()
-        except Exception: pass
+    try: pygame.mixer.music.stop()
+    except Exception: pass
+    SONG_FILE = None
     if win2 is not None:
         try: win2.destroy()
         except Exception: pass
@@ -848,7 +953,7 @@ def _render_player(surf, ps: PlayerState, label: str = ""):
         if note.quantum:
             draw_quantum(surf, note)
         else:
-            draw_classical(surf, note)
+            draw_classical(surf, note, ps.idx)
 
     for p in ps.particles: p.draw(surf)
     for f in ps.floats:    f.draw(surf)
@@ -872,8 +977,10 @@ _seen_collapsed_nids: set = set()
 # ─────────────────────────────────────────────────────────────────────────────
 def main():
     global game_state, q_collapsed, _seen_collapsed_nids
+    global n_players, song_cursor
 
     btn1_rect = btn2_rect = None
+    song_rects: list = []
 
     while True:
         clk.tick(FPS)
@@ -889,14 +996,51 @@ def main():
                     if event.key == pygame.K_ESCAPE:
                         pygame.quit(); sys.exit()
                     elif event.key == pygame.K_1:
-                        start_game(1)
+                        n_players   = 1
+                        song_cursor = 0
+                        game_state  = GameState.SONG_SELECT
                     elif event.key == pygame.K_2:
-                        start_game(2)
+                        n_players   = 2
+                        song_cursor = 0
+                        game_state  = GameState.SONG_SELECT
                 elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                     if btn1_rect and btn1_rect.collidepoint(event.pos):
-                        start_game(1)
+                        n_players   = 1
+                        song_cursor = 0
+                        game_state  = GameState.SONG_SELECT
                     elif btn2_rect and btn2_rect.collidepoint(event.pos):
-                        start_game(2)
+                        n_players   = 2
+                        song_cursor = 0
+                        game_state  = GameState.SONG_SELECT
+            continue
+
+        # ── SONG SELECT ───────────────────────────────────────────────────────
+        if game_state == GameState.SONG_SELECT:
+            song_rects = draw_song_select(song_cursor, n_players)
+
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    pygame.quit(); sys.exit()
+                elif event.type == pygame.KEYDOWN:
+                    if event.key == pygame.K_ESCAPE:
+                        game_state = GameState.MENU
+                    elif event.key == pygame.K_UP:
+                        song_cursor = (song_cursor - 1) % len(SONGS)
+                    elif event.key == pygame.K_DOWN:
+                        song_cursor = (song_cursor + 1) % len(SONGS)
+                    elif event.key == pygame.K_RETURN:
+                        start_game(n_players, SONGS[song_cursor])
+                    else:
+                        # Number keys 1–6
+                        for idx in range(len(SONGS)):
+                            if event.key == getattr(pygame, f"K_{idx + 1}", None):
+                                song_cursor = idx
+                                start_game(n_players, SONGS[song_cursor])
+                elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                    for idx, rect in enumerate(song_rects):
+                        if rect.collidepoint(event.pos):
+                            song_cursor = idx
+                            start_game(n_players, SONGS[song_cursor])
             continue
 
         # ── PLAYING ───────────────────────────────────────────────────────────
@@ -914,12 +1058,10 @@ def main():
                 elif event.key == pygame.K_BACKSLASH:
                     bias_slider.val = 50.0
 
-                # P1 arrow keys
                 for i, k in enumerate(KEYS_P1):
                     if event.key == k:
                         p1.handle_key(i)
 
-                # P2 WASD (2P only)
                 if p2:
                     for i, k in enumerate(KEYS_P2):
                         if event.key == k:
@@ -929,7 +1071,6 @@ def main():
                 sl.handle_event(event)
 
         update()
-        # Count newly collapsed quantum notes (once per unique nid)
         for nid in collapsed_outcomes:
             if nid not in _seen_collapsed_nids:
                 _seen_collapsed_nids.add(nid)
