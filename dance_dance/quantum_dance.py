@@ -167,10 +167,10 @@ DIFF_COLOR = {"Easy": (80, 220, 120), "Hard": (255, 180, 60), "Extreme": (255, 6
 # Layout constants
 # ─────────────────────────────────────────────────────────────────────────────
 N_LANES  = 4
-LANE_W   = 108
-LANE_GAP = 20
-TOTAL_W  = N_LANES * LANE_W + (N_LANES - 1) * LANE_GAP   # 512
-LX0      = (SW - TOTAL_W) // 2                            # 224
+LANE_W   = 200
+LANE_GAP = 16
+TOTAL_W  = N_LANES * LANE_W + (N_LANES - 1) * LANE_GAP   # 848
+LX0      = (SW - TOTAL_W) // 2                            #  56 — small side margins
 
 TOP_H    = 82
 BOT_H    = 88
@@ -179,7 +179,7 @@ LANE_BOT = SH - BOT_H        # 632
 
 TARGET_Y   = LANE_BOT - 28
 HIT_ZONE_H = 56
-NOTE_W     = LANE_W - 10
+NOTE_W     = LANE_W - 14
 NOTE_H     = 52
 
 HIT_PERFECT = 22
@@ -597,8 +597,8 @@ def draw_lanes(surf, key_flash):
     for i in range(N_LANES):
         x = lx(i)
         pygame.draw.line(surf, (80, 35, 105), (x + 4, cy), (x + LANE_W - 4, cy), 1)
-    cl = F_XSM.render("◀ collapse zone", True, (100, 45, 130))
-    surf.blit(cl, (lx(N_LANES - 1) + LANE_W + 4, cy - 7))
+    cl = F_XSM.render("collapse zone", True, (100, 45, 130))
+    surf.blit(cl, (lcx(0) - cl.get_width() // 2, cy - 14))
 
 
 def draw_hit_zone(surf):
