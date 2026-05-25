@@ -29,9 +29,9 @@ Hardware
 # ─────────────────────────────────────────────────────────────────────────────
 # MUSIC CONFIG  — edit these three lines to sync to a song
 # ─────────────────────────────────────────────────────────────────────────────
-SONG_FILE      = None      # e.g. "song.ogg"  — None = slider-driven mode
-SONG_BPM       = 128.0     # beats per minute of the song
-SONG_OFFSET    = 0.0       # seconds of intro silence before first beat
+SONG_FILE      = "music/Alan Walker - Alone.mp3"
+SONG_BPM       = 150.0
+SONG_OFFSET    = 3.0       # seconds of intro silence before first beat
 BEATS_PER_NOTE = 1         # spawn one note every N beats
 BEATS_TO_FALL  = 4         # beats from spawn to hit zone
 
