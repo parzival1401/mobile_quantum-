@@ -588,16 +588,18 @@ def draw_panels(surf):
     surf.blit(rp_lbl, (RP_X + RP_W // 2 - rp_lbl.get_width() // 2, LANE_TOP + 8))
 
 
-def draw_lanes(surf, key_flash):
+def draw_lanes(surf, key_flash, mirror: bool = False):
     for i in range(N_LANES):
         x    = lx(i)
         rect = pygame.Rect(x, LANE_TOP, LANE_W, LANE_BOT - LANE_TOP)
         pygame.draw.rect(surf, LANE_BG, rect)
         pygame.draw.rect(surf, LANE_LINE, rect, 1)
-        if key_flash[i] > 0:
-            r, g, b = LANE_C[i]
+        # logical lane whose notes fall in screen column i
+        li = _mlane(i, mirror)
+        if key_flash[li] > 0:
+            r, g, b = LANE_C[li]
             s = pygame.Surface((LANE_W, LANE_BOT - LANE_TOP), pygame.SRCALPHA)
-            s.fill((r, g, b, int(90 * key_flash[i] / 14)))
+            s.fill((r, g, b, int(90 * key_flash[li] / 14)))
             surf.blit(s, (x, LANE_TOP))
 
     cy = get_collapse_y()
@@ -955,7 +957,7 @@ def update():
 
 def _render_player(surf, ps: PlayerState, label: str = ""):
     surf.fill(BG)
-    draw_lanes(surf, ps.key_flash)
+    draw_lanes(surf, ps.key_flash, mirror=(ps.idx == 1))
     draw_hit_zone(surf)
 
     for note in ps.notes:
