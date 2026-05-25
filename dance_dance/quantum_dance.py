@@ -477,8 +477,7 @@ class PlayerState:
 
     def handle_key(self, lane: int):
         self.key_flash[lane] = 14
-        palette = LANE_C if self.idx == 0 else LANE_C_P2
-        scx     = lcx(lane)
+        scx = lcx(lane)
 
         best, best_d = None, 9999
         for note in self.notes:
@@ -503,11 +502,11 @@ class PlayerState:
             if quality == "PERFECT":
                 self.score += 300 * max(1, self.combo // 5)
                 self.floats.append(FloatText("PERFECT!", scx, TARGET_Y - 42, GOLD, F_MED))
-                for _ in range(20): self.particles.append(Particle(scx, TARGET_Y, palette[lane]))
+                for _ in range(20): self.particles.append(Particle(scx, TARGET_Y, LANE_C[lane]))
             else:
                 self.score += 100 * max(1, self.combo // 10)
                 self.floats.append(FloatText("GOOD", scx, TARGET_Y - 42, WHITE))
-                for _ in range(9): self.particles.append(Particle(scx, TARGET_Y, palette[lane]))
+                for _ in range(9): self.particles.append(Particle(scx, TARGET_Y, LANE_C[lane]))
         else:
             self.combo = 0
             self.floats.append(FloatText("EARLY", scx, TARGET_Y - 42, (255, 180, 0)))
@@ -589,15 +588,14 @@ def draw_panels(surf):
     surf.blit(rp_lbl, (RP_X + RP_W // 2 - rp_lbl.get_width() // 2, LANE_TOP + 8))
 
 
-def draw_lanes(surf, key_flash, player_idx: int = 0):
-    palette = LANE_C if player_idx == 0 else LANE_C_P2
+def draw_lanes(surf, key_flash):
     for i in range(N_LANES):
         x    = lx(i)
         rect = pygame.Rect(x, LANE_TOP, LANE_W, LANE_BOT - LANE_TOP)
         pygame.draw.rect(surf, LANE_BG, rect)
         pygame.draw.rect(surf, LANE_LINE, rect, 1)
         if key_flash[i] > 0:
-            r, g, b = palette[i]
+            r, g, b = LANE_C[i]
             s = pygame.Surface((LANE_W, LANE_BOT - LANE_TOP), pygame.SRCALPHA)
             s.fill((r, g, b, int(90 * key_flash[i] / 14)))
             surf.blit(s, (x, LANE_TOP))
@@ -610,12 +608,11 @@ def draw_lanes(surf, key_flash, player_idx: int = 0):
     surf.blit(cl, (lcx(0) - cl.get_width() // 2, cy - 14))
 
 
-def draw_hit_zone(surf, player_idx: int = 0):
-    palette = LANE_C if player_idx == 0 else LANE_C_P2
+def draw_hit_zone(surf):
     for i in range(N_LANES):
         x       = lx(i)
         scx     = lcx(i)
-        r, g, b = palette[i]
+        r, g, b = LANE_C[i]
         hz      = pygame.Rect(x + 4, TARGET_Y - HIT_ZONE_H // 2,
                               LANE_W - 8, HIT_ZONE_H)
         pygame.draw.rect(surf, (r // 5, g // 5, b // 5), hz, border_radius=10)
@@ -628,9 +625,8 @@ def draw_hit_zone(surf, player_idx: int = 0):
 
 
 def draw_classical(surf, note: Note, player_idx: int = 0):
-    palette = LANE_C if player_idx == 0 else LANE_C_P2
     mirror  = player_idx == 1
-    r, g, b = palette[note.lane]
+    r, g, b = LANE_C[note.lane]
     scx     = lcx(_mlane(note.lane, mirror))
     rect    = pygame.Rect(scx - NOTE_W // 2, int(note.y), NOTE_W, NOTE_H)
     pygame.draw.rect(surf, (r // 3, g // 3, b // 3), rect, border_radius=9)
@@ -959,8 +955,8 @@ def update():
 
 def _render_player(surf, ps: PlayerState, label: str = ""):
     surf.fill(BG)
-    draw_lanes(surf, ps.key_flash, ps.idx)
-    draw_hit_zone(surf, ps.idx)
+    draw_lanes(surf, ps.key_flash)
+    draw_hit_zone(surf)
 
     for note in ps.notes:
         if note.quantum:
