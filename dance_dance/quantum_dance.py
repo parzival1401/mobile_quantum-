@@ -568,8 +568,7 @@ def spawn_note():
         nid = Note._nid
         p1.notes.append(Note(a, quantum=True, lane2=b, nid=nid, wave_phase=wp))
         if n_players == 2:
-            # quantum: mirror both lanes so P2 sees the entangled pair swapped
-            p2.notes.append(Note(_m(a), quantum=True, lane2=_m(b), nid=nid, wave_phase=wp))
+            p2.notes.append(Note(a, quantum=True, lane2=b, nid=nid, wave_phase=wp))
         q_total += 1
     else:
         lane = random.randint(0, N_LANES - 1)
