@@ -1,0 +1,55 @@
+DDR GAME - SONG LIST
+====================
+Reference file for Claude Code development.
+Each entry includes: Song Name | Artist | BPM | Difficulty
+
+--------------------------------------------------------------
+SONG LIST
+--------------------------------------------------------------
+
+1. Faded
+   Artist     : Alan Walker
+   BPM        : 90
+   Difficulty : Easy
+
+2. Alone
+   Artist     : Alan Walker
+   BPM        : 150
+   Difficulty : Hard
+
+3. Bad Guy
+   Artist     : Billie Eilish
+   BPM        : 135
+   Difficulty : Hard
+
+4. Dynamite
+   Artist     : BTS
+   BPM        : 114
+   Difficulty : Easy
+
+5. Can't Stop the Feeling
+   Artist     : Justin Timberlake
+   BPM        : 113
+   Difficulty : Easy
+
+6. Party Rock Anthem
+   Artist     : LMFAO
+   BPM        : 130
+   Difficulty : Extreme
+
+--------------------------------------------------------------
+DIFFICULTY SCALE
+--------------------------------------------------------------
+Easy    - Beginner friendly. Slower BPM, simple patterns.
+Hard    - Moderate challenge. Fast BPM, complex patterns.
+Extreme - Maximum intensity. Very fast with dense arrows.
+
+--------------------------------------------------------------
+NOTES FOR CLAUDE CODE
+--------------------------------------------------------------
+- BPM values determine arrow spawn rate in the game engine.
+- Use BPM to calculate beat interval: interval_ms = (60 / BPM) * 1000
+- Difficulty maps to arrow pattern density and speed multiplier.
+  Easy    -> speed multiplier: 1.0x
+  Hard    -> speed multiplier: 1.5x
+  Extreme -> speed multiplier: 2.0x
