@@ -593,16 +593,17 @@ def draw_panels(surf):
 def draw_lanes(surf, key_flash, player_idx: int = 0):
     palette = LANE_C if player_idx == 0 else LANE_C_P2
     mirror  = player_idx == 1
-    for i in range(N_LANES):
-        si   = _mlane(i, mirror)   # screen position
-        x    = lx(si)
+    for sc in range(N_LANES):
+        # logical lane that occupies screen column sc
+        li   = _mlane(sc, mirror)
+        x    = lx(sc)
         rect = pygame.Rect(x, LANE_TOP, LANE_W, LANE_BOT - LANE_TOP)
         pygame.draw.rect(surf, LANE_BG, rect)
         pygame.draw.rect(surf, LANE_LINE, rect, 1)
-        if key_flash[i] > 0:
-            r, g, b = palette[i]
+        if key_flash[li] > 0:
+            r, g, b = palette[li]
             s = pygame.Surface((LANE_W, LANE_BOT - LANE_TOP), pygame.SRCALPHA)
-            s.fill((r, g, b, int(90 * key_flash[i] / 14)))
+            s.fill((r, g, b, int(90 * key_flash[li] / 14)))
             surf.blit(s, (x, LANE_TOP))
 
     cy = get_collapse_y()
@@ -616,18 +617,19 @@ def draw_lanes(surf, key_flash, player_idx: int = 0):
 def draw_hit_zone(surf, player_idx: int = 0):
     palette = LANE_C if player_idx == 0 else LANE_C_P2
     mirror  = player_idx == 1
-    for i in range(N_LANES):
-        si      = _mlane(i, mirror)
-        x       = lx(si)
-        scx     = lcx(si)
-        r, g, b = palette[i]
+    for sc in range(N_LANES):
+        # logical lane that occupies screen column sc
+        li      = _mlane(sc, mirror)
+        x       = lx(sc)
+        scx     = lcx(sc)
+        r, g, b = palette[li]
         hz      = pygame.Rect(x + 4, TARGET_Y - HIT_ZONE_H // 2,
                               LANE_W - 8, HIT_ZONE_H)
         pygame.draw.rect(surf, (r // 5, g // 5, b // 5), hz, border_radius=10)
         pygame.draw.rect(surf, (r // 2, g // 2, b // 2), hz, 2, border_radius=10)
         pygame.draw.line(surf, (r, g, b),
                          (x + 6, TARGET_Y), (x + LANE_W - 6, TARGET_Y), 2)
-        lbl = F_ARROW.render(ARROWS[i], True, (r, g, b))
+        lbl = F_ARROW.render(ARROWS[li], True, (r, g, b))
         surf.blit(lbl, (scx - lbl.get_width() // 2,
                         TARGET_Y + HIT_ZONE_H // 2 + 5))
 
