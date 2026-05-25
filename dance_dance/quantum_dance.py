@@ -1109,13 +1109,10 @@ def start_game(num_players: int, song: dict):
         except Exception:
             n_displays = 1
 
-        print(f"[DEBUG] num_displays={n_displays}")
-
         if n_displays >= 2:
             # Option A — two physical monitors
             try:
                 from pygame._sdl2.video import Window, Renderer
-                print(f"[DEBUG] Trying Option A (two windows)...")
                 two_screen_mode = True
                 split_mode      = False
                 # Place P2 window at x = width of display 0 so it lands on display 1
@@ -1127,20 +1124,15 @@ def start_game(num_players: int, song: dict):
                 surf2 = pygame.Surface((SW, SH))
                 ctx1  = make_ctx(SW)
                 ctx2  = make_ctx(SW)
-                print(f"[DEBUG] Option A OK — P2 window at x={d0_w} (display 1)")
             except Exception as e:
-                import traceback
-                print(f"[WARNING] Second monitor init failed, falling back to split:")
-                traceback.print_exc()
+                print(f"[WARNING] Second monitor init failed, falling back to split: {e}")
                 two_screen_mode = False
                 win2 = ren2 = surf2 = None
                 split_mode = True
                 ctx1 = make_ctx(SW // 2)
                 ctx2 = make_ctx(SW // 2)
-                print(f"[DEBUG] Fell back to Option B (split screen)")
         else:
             # Option B — split-screen on one monitor
-            print(f"[DEBUG] Option B (split screen) — only 1 display detected")
             split_mode = True
             ctx1 = make_ctx(SW // 2)
             ctx2 = make_ctx(SW // 2)
