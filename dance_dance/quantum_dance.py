@@ -25,10 +25,13 @@ BEATS_PER_NOTE = 1    # spawn one note every N beats
 BEATS_TO_FALL  = 4    # base beats from spawn to hit zone (scaled by difficulty)
 
 # Active song settings — set by song select, do not edit directly
-SONG_FILE   = None
-SONG_BPM    = 128.0
-SONG_OFFSET = 0.0
+SONG_FILE     = None
+SONG_BPM      = 128.0
+SONG_OFFSET   = 0.0
+SONG_DURATION = 120.0   # seconds — set per song at start_game
 _active_beats_fall = float(BEATS_TO_FALL)
+
+FADE_START  = 10.0   # seconds before end to begin fade-out
 
 # ─────────────────────────────────────────────────────────────────────────────
 # SERIAL PORT HOOK  (hardware potentiometer → BIAS slider)
@@ -174,22 +177,22 @@ F_ARROW  = _f(26)
 SONGS = [
     {"title": "Faded",                  "artist": "Alan Walker",
      "file": "music/Alan Walker - Faded.mp3",
-     "bpm": 90,  "offset": 0.0, "difficulty": "Easy"},
+     "bpm": 90,  "offset": 0.0, "difficulty": "Easy",    "duration": 120},
     {"title": "Alone",                  "artist": "Alan Walker",
      "file": "music/Alan Walker - Alone.mp3",
-     "bpm": 150, "offset": 3.0, "difficulty": "Hard"},
+     "bpm": 150, "offset": 3.0, "difficulty": "Hard",    "duration":  90},
     {"title": "Bad Guy",                "artist": "Billie Eilish",
      "file": "music/Billie Eilish - bad guy (Lyrics).mp3",
-     "bpm": 135, "offset": 0.0, "difficulty": "Hard"},
+     "bpm": 135, "offset": 0.0, "difficulty": "Hard",    "duration": 100},
     {"title": "Dynamite",               "artist": "BTS",
      "file": "music/BTS - Dynamite (Lyrics).mp3",
-     "bpm": 114, "offset": 0.0, "difficulty": "Easy"},
+     "bpm": 114, "offset": 0.0, "difficulty": "Easy",    "duration": 110},
     {"title": "Can't Stop the Feeling", "artist": "Justin Timberlake",
      "file": "music/Justin Timberlake - CAN'T STOP THE FEELING! (Lyrics).mp3",
-     "bpm": 113, "offset": 0.0, "difficulty": "Easy"},
+     "bpm": 113, "offset": 0.0, "difficulty": "Easy",    "duration": 120},
     {"title": "Party Rock Anthem",      "artist": "LMFAO",
      "file": "music/LMFAO - Party Rock Anthem (Lyrics) ft. Lauren Bennett, GoonRock.mp3",
-     "bpm": 130, "offset": 0.0, "difficulty": "Extreme"},
+     "bpm": 130, "offset": 0.0, "difficulty": "Extreme", "duration":  90},
 ]
 
 DIFF_SPEED = {"Easy": 1.0, "Hard": 1.5, "Extreme": 2.0}
@@ -1073,7 +1076,7 @@ def start_game(num_players: int, song: dict):
     global n_players, game_state, p1, p2, last_song
     global q_collapsed, q_total, tick, spawn_timer, collapsed_outcomes, last_beat
     global win2, ren2, surf2
-    global SONG_FILE, SONG_BPM, SONG_OFFSET, _active_beats_fall
+    global SONG_FILE, SONG_BPM, SONG_OFFSET, SONG_DURATION, _active_beats_fall
     global two_screen_mode, split_mode, ctx1, ctx2
     last_song = song
 
@@ -1084,6 +1087,7 @@ def start_game(num_players: int, song: dict):
     SONG_FILE          = song["file"]
     SONG_BPM           = float(song["bpm"])
     SONG_OFFSET        = float(song["offset"])
+    SONG_DURATION      = float(song.get("duration", 120))
     speed_mult         = DIFF_SPEED[song["difficulty"]]
     _active_beats_fall = max(2.0, BEATS_TO_FALL / speed_mult)
 
@@ -1146,6 +1150,7 @@ def start_game(num_players: int, song: dict):
     # Music
     if SONG_FILE:
         try:
+            pygame.mixer.music.set_volume(1.0)
             pygame.mixer.music.load(SONG_FILE)
             pygame.mixer.music.play()
         except Exception as e:
@@ -1358,6 +1363,21 @@ def main():
                 _seen_collapsed_nids.add(nid)
                 q_collapsed += 1
 
+        # ── Duration-based fade & auto-end ───────────────────────────────────
+        if SONG_FILE and pygame.mixer.music.get_busy():
+            elapsed_ms  = pygame.mixer.music.get_pos()
+            elapsed_sec = max(0.0, elapsed_ms / 1000.0 - SONG_OFFSET)
+            time_left   = SONG_DURATION - elapsed_sec
+            if time_left <= 0:
+                # Time's up — stop music and let notes drain
+                try: pygame.mixer.music.stop()
+                except Exception: pass
+            elif time_left <= FADE_START:
+                # Smooth fade: volume 1.0 → 0.0 over FADE_START seconds
+                vol = max(0.0, time_left / FADE_START)
+                try: pygame.mixer.music.set_volume(vol)
+                except Exception: pass
+
         # ── Transition to RESULTS ─────────────────────────────────────────────
         song_done = SONG_FILE and not pygame.mixer.music.get_busy()
         any_dead  = p1.dead or (p2 is not None and p2.dead)
@@ -1369,6 +1389,8 @@ def main():
                 try: pygame.mixer.music.stop()
                 except Exception: pass
         elif song_done and not p1.notes and (p2 is None or not p2.notes):
+            try: pygame.mixer.music.set_volume(1.0)  # reset for next song
+            except Exception: pass
             game_state = GameState.RESULTS
 
         # ── Render ────────────────────────────────────────────────────────────
