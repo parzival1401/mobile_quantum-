@@ -476,8 +476,7 @@ class PlayerState:
         self.key_flash = [0] * N_LANES
 
     def handle_key(self, key_idx: int):
-        # For P2, remap key to the mirrored logical lane so notes match
-        lane = _P2_KEY_MAP[key_idx] if self.idx == 1 else key_idx
+        lane = key_idx
         self.key_flash[lane] = 14
         scx = lcx(lane)
 
@@ -555,6 +554,11 @@ p2 : PlayerState = None
 # ─────────────────────────────────────────────────────────────────────────────
 # Spawner
 # ─────────────────────────────────────────────────────────────────────────────
+def _m(lane: int) -> int:
+    """Mirror a lane index for P2: 0↔3, 1↔2."""
+    return _P2_KEY_MAP[lane]
+
+
 def spawn_note():
     global q_total
     if random.random() < 0.38:
@@ -564,7 +568,8 @@ def spawn_note():
         nid = Note._nid
         p1.notes.append(Note(a, quantum=True, lane2=b, nid=nid, wave_phase=wp))
         if n_players == 2:
-            p2.notes.append(Note(a, quantum=True, lane2=b, nid=nid, wave_phase=wp))
+            # quantum: mirror both lanes so P2 sees the entangled pair swapped
+            p2.notes.append(Note(_m(a), quantum=True, lane2=_m(b), nid=nid, wave_phase=wp))
         q_total += 1
     else:
         lane = random.randint(0, N_LANES - 1)
@@ -572,7 +577,7 @@ def spawn_note():
         nid = Note._nid
         p1.notes.append(Note(lane, nid=nid))
         if n_players == 2:
-            p2.notes.append(Note(lane, nid=nid))
+            p2.notes.append(Note(_m(lane), nid=nid))
 
 
 # ─────────────────────────────────────────────────────────────────────────────
