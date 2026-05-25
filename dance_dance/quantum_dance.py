@@ -198,9 +198,9 @@ FALL_DISTANCE = TARGET_Y - LANE_TOP   # ~522 px
 def lx(lane):  return LX0 + lane * (LANE_W + LANE_GAP)
 def lcx(lane): return lx(lane) + LANE_W // 2
 
-def _mlane(lane, mirror: bool) -> int:
-    """Return screen-position lane index (mirrored for P2)."""
-    return (N_LANES - 1 - lane) if mirror else lane
+# P2 key mirror map: physical key index → logical lane
+# Lane 0(←)↔3(→), Lane 1(↓)↔2(↑)
+_P2_KEY_MAP = [3, 2, 1, 0]
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -476,20 +476,18 @@ class PlayerState:
         self.key_flash = [0] * N_LANES
 
     def handle_key(self, key_idx: int):
-        # key_idx: physical key index (0–3), same for both players
-        # logical_lane: the note.lane value that falls at this key's screen column
-        mirror       = self.idx == 1
-        logical_lane = _mlane(key_idx, mirror)
-        self.key_flash[key_idx] = 14
-        scx = lcx(_mlane(key_idx, mirror))   # screen x where the note visually is
+        # For P2, remap key to the mirrored logical lane so notes match
+        lane = _P2_KEY_MAP[key_idx] if self.idx == 1 else key_idx
+        self.key_flash[lane] = 14
+        scx = lcx(lane)
 
         best, best_d = None, 9999
         for note in self.notes:
             if not note.alive or note.hit: continue
             if note.quantum and not note.collapsed:
-                in_lane = logical_lane in (note.lane, note.lane2)
+                in_lane = lane in (note.lane, note.lane2)
             else:
-                in_lane = logical_lane == note.lane
+                in_lane = lane == note.lane
             if not in_lane: continue
             d = abs(note.cy() - TARGET_Y)
             if d < best_d: best_d, best = d, note
@@ -506,21 +504,20 @@ class PlayerState:
             if quality == "PERFECT":
                 self.score += 300 * max(1, self.combo // 5)
                 self.floats.append(FloatText("PERFECT!", scx, TARGET_Y - 42, GOLD, F_MED))
-                for _ in range(20): self.particles.append(Particle(scx, TARGET_Y, LANE_C[logical_lane]))
+                for _ in range(20): self.particles.append(Particle(scx, TARGET_Y, LANE_C[lane]))
             else:
                 self.score += 100 * max(1, self.combo // 10)
                 self.floats.append(FloatText("GOOD", scx, TARGET_Y - 42, WHITE))
-                for _ in range(9): self.particles.append(Particle(scx, TARGET_Y, LANE_C[logical_lane]))
+                for _ in range(9): self.particles.append(Particle(scx, TARGET_Y, LANE_C[lane]))
         else:
             self.combo = 0
             self.floats.append(FloatText("EARLY", scx, TARGET_Y - 42, (255, 180, 0)))
 
     def update(self, collapsed_outcomes: dict):
-        mirror = self.idx == 1
         for note in self.notes:
             note.update(collapsed_outcomes, self.idx)
             if note.just_collapsed:
-                cx = lcx(_mlane(note.dropped_lane, mirror))
+                cx = lcx(note.dropped_lane)
                 ny = note.y + NOTE_H // 2
                 for _ in range(16): self.particles.append(Particle(cx, ny, Q_WAVE, 0.9))
                 self.floats.append(FloatText(
@@ -529,7 +526,7 @@ class PlayerState:
                     Q_PURPLE, F_SM))
             if note.just_missed:
                 self.combo = 0
-                self.floats.append(FloatText("MISS", lcx(_mlane(note.lane, mirror)), TARGET_Y - 42, RED))
+                self.floats.append(FloatText("MISS", lcx(note.lane), TARGET_Y - 42, RED))
 
         self.notes[:]     = [n for n in self.notes     if n.alive]
         self.max_combo    = max(self.max_combo, self.combo)
@@ -592,18 +589,16 @@ def draw_panels(surf):
     surf.blit(rp_lbl, (RP_X + RP_W // 2 - rp_lbl.get_width() // 2, LANE_TOP + 8))
 
 
-def draw_lanes(surf, key_flash, mirror: bool = False):
+def draw_lanes(surf, key_flash):
     for i in range(N_LANES):
         x    = lx(i)
         rect = pygame.Rect(x, LANE_TOP, LANE_W, LANE_BOT - LANE_TOP)
         pygame.draw.rect(surf, LANE_BG, rect)
         pygame.draw.rect(surf, LANE_LINE, rect, 1)
-        # logical lane whose notes fall in screen column i
-        li = _mlane(i, mirror)
-        if key_flash[li] > 0:
-            r, g, b = LANE_C[li]
+        if key_flash[i] > 0:
+            r, g, b = LANE_C[i]
             s = pygame.Surface((LANE_W, LANE_BOT - LANE_TOP), pygame.SRCALPHA)
-            s.fill((r, g, b, int(90 * key_flash[li] / 14)))
+            s.fill((r, g, b, int(90 * key_flash[i] / 14)))
             surf.blit(s, (x, LANE_TOP))
 
     cy = get_collapse_y()
@@ -630,10 +625,9 @@ def draw_hit_zone(surf):
                         TARGET_Y + HIT_ZONE_H // 2 + 5))
 
 
-def draw_classical(surf, note: Note, player_idx: int = 0):
-    mirror  = player_idx == 1
+def draw_classical(surf, note: Note):
     r, g, b = LANE_C[note.lane]
-    scx     = lcx(_mlane(note.lane, mirror))
+    scx     = lcx(note.lane)
     rect    = pygame.Rect(scx - NOTE_W // 2, int(note.y), NOTE_W, NOTE_H)
     pygame.draw.rect(surf, (r // 3, g // 3, b // 3), rect, border_radius=9)
     pygame.draw.rect(surf, (r, g, b), rect, 3, border_radius=9)
@@ -642,12 +636,10 @@ def draw_classical(surf, note: Note, player_idx: int = 0):
                    int(note.y) + (NOTE_H - ar.get_height()) // 2))
 
 
-def draw_quantum(surf, note: Note, player_idx: int = 0):
-    mirror = player_idx == 1
-
+def draw_quantum(surf, note: Note):
     if note.collapsed:
         r, g, b = Q_PURPLE
-        cx   = lcx(_mlane(note.lane, mirror))
+        cx   = lcx(note.lane)
         rect = pygame.Rect(cx - NOTE_W // 2, int(note.y), NOTE_W, NOTE_H)
         pygame.draw.rect(surf, (r // 3, g // 3, b // 3), rect, border_radius=9)
         pygame.draw.rect(surf, (r, g, b), rect, 3, border_radius=9)
@@ -665,7 +657,7 @@ def draw_quantum(surf, note: Note, player_idx: int = 0):
     for gl in (note.lane, note.lane2):
         r, g, b = Q_PURPLE
         ri, gi, bi = int(r * af), int(g * af * 0.35), int(b * af)
-        cx   = lcx(_mlane(gl, mirror))
+        cx   = lcx(gl)
         rect = pygame.Rect(cx - NOTE_W // 2, int(note.y), NOTE_W, NOTE_H)
         pygame.draw.rect(surf, (ri // 3, gi // 3, bi // 3), rect, border_radius=9)
         pygame.draw.rect(surf, (ri, gi, bi), rect, 2, border_radius=9)
@@ -673,7 +665,7 @@ def draw_quantum(surf, note: Note, player_idx: int = 0):
         surf.blit(qm, (cx - qm.get_width() // 2,
                        int(note.y) + (NOTE_H - qm.get_height()) // 2))
 
-    xa, xb = lcx(_mlane(note.lane, mirror)), lcx(_mlane(note.lane2, mirror))
+    xa, xb = lcx(note.lane), lcx(note.lane2)
     x0, x1 = min(xa, xb), max(xa, xb)
     wy = int(note.y) + NOTE_H // 2
     pts = []
@@ -961,14 +953,14 @@ def update():
 
 def _render_player(surf, ps: PlayerState, label: str = ""):
     surf.fill(BG)
-    draw_lanes(surf, ps.key_flash, mirror=(ps.idx == 1))
+    draw_lanes(surf, ps.key_flash)
     draw_hit_zone(surf)
 
     for note in ps.notes:
         if note.quantum:
-            draw_quantum(surf, note, ps.idx)
+            draw_quantum(surf, note)
         else:
-            draw_classical(surf, note, ps.idx)
+            draw_classical(surf, note)
 
     for p in ps.particles: p.draw(surf)
     for f in ps.floats:    f.draw(surf)
