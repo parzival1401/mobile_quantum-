@@ -246,6 +246,41 @@ _P2_KEY_MAP = [3, 2, 1, 0]
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# RenderCtx — per-surface layout (scales for split-screen 480px halves)
+# ─────────────────────────────────────────────────────────────────────────────
+from dataclasses import dataclass
+
+@dataclass
+class RenderCtx:
+    sw       : int
+    lane_w   : int
+    lane_gap : int
+    lx0      : int
+    note_w   : int
+
+def make_ctx(surf_w: int) -> RenderCtx:
+    scale    = surf_w / SW
+    lw       = max(60, int(LANE_W  * scale))
+    lg       = max(4,  int(LANE_GAP * scale))
+    total    = N_LANES * lw + (N_LANES - 1) * lg
+    lx0      = (surf_w - total) // 2
+    nw       = max(40, lw - int(14 * scale))
+    return RenderCtx(sw=surf_w, lane_w=lw, lane_gap=lg, lx0=lx0, note_w=nw)
+
+def _lx(lane: int, ctx: RenderCtx) -> int:
+    return ctx.lx0 + lane * (ctx.lane_w + ctx.lane_gap)
+
+def _lcx(lane: int, ctx: RenderCtx) -> int:
+    return _lx(lane, ctx) + ctx.lane_w // 2
+
+# Display-mode globals (set in start_game)
+two_screen_mode = False   # Option A: two SDL2 windows on separate monitors
+split_mode      = False   # Option B: one window split 50/50
+ctx1: RenderCtx = None    # P1 render context
+ctx2: RenderCtx = None    # P2 render context
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # BPM timing helpers
 # ─────────────────────────────────────────────────────────────────────────────
 def _bpm_fall_speed() -> float:
@@ -506,9 +541,10 @@ class FloatText:
 # Per-player state container
 # ─────────────────────────────────────────────────────────────────────────────
 class PlayerState:
-    def __init__(self, player_idx: int, keys: list):
+    def __init__(self, player_idx: int, keys: list, ctx: "RenderCtx" = None):
         self.idx       = player_idx
         self.keys      = keys
+        self.ctx       = ctx  # layout context; set after make_ctx()
         self.notes     : list[Note]      = []
         self.particles : list[Particle]  = []
         self.floats    : list[FloatText] = []
@@ -532,7 +568,7 @@ class PlayerState:
         if self.dead: return
         lane = key_idx
         self.key_flash[lane] = 14
-        scx = lcx(lane)
+        scx = _lcx(lane, self.ctx) if self.ctx else lcx(lane)
 
         best, best_d = None, 9999
         for note in self.notes:
@@ -594,7 +630,8 @@ class PlayerState:
         for note in self.notes:
             note.update(collapsed_outcomes, self.idx)
             if note.just_collapsed:
-                cx = lcx(note.dropped_lane)
+                cx = (_lcx(note.dropped_lane, self.ctx) if self.ctx
+                      else lcx(note.dropped_lane))
                 ny = note.y + NOTE_H // 2
                 for _ in range(16): self.particles.append(Particle(cx, ny, Q_WAVE, 0.9))
                 self.floats.append(FloatText(
@@ -607,7 +644,8 @@ class PlayerState:
                 self.last_milestone = 0
                 self.hp = max(0, self.hp - HP_LOSS_QUANTUM)
                 self.miss_count += 1
-                self.floats.append(FloatText("MISS", lcx(note.lane), TARGET_Y - 42, RED))
+                miss_cx = (_lcx(note.lane, self.ctx) if self.ctx else lcx(note.lane))
+                self.floats.append(FloatText("MISS", miss_cx, TARGET_Y - 42, RED))
                 if self.hp == 0: self.dead = True
 
         self.notes[:]     = [n for n in self.notes     if n.alive]
@@ -682,46 +720,47 @@ def draw_panels(surf):
     surf.blit(rp_lbl, (RP_X + RP_W // 2 - rp_lbl.get_width() // 2, LANE_TOP + 8))
 
 
-def draw_lanes(surf, key_flash):
+def draw_lanes(surf, key_flash, ctx: RenderCtx):
     for i in range(N_LANES):
-        x    = lx(i)
-        rect = pygame.Rect(x, LANE_TOP, LANE_W, LANE_BOT - LANE_TOP)
+        x    = _lx(i, ctx)
+        rect = pygame.Rect(x, LANE_TOP, ctx.lane_w, LANE_BOT - LANE_TOP)
         pygame.draw.rect(surf, LANE_BG, rect)
         pygame.draw.rect(surf, LANE_LINE, rect, 1)
         if key_flash[i] > 0:
             r, g, b = LANE_C[i]
-            s = pygame.Surface((LANE_W, LANE_BOT - LANE_TOP), pygame.SRCALPHA)
+            s = pygame.Surface((ctx.lane_w, LANE_BOT - LANE_TOP), pygame.SRCALPHA)
             s.fill((r, g, b, int(90 * key_flash[i] / 14)))
             surf.blit(s, (x, LANE_TOP))
 
     cy = get_collapse_y()
     for i in range(N_LANES):
-        x = lx(i)
-        pygame.draw.line(surf, (80, 35, 105), (x + 4, cy), (x + LANE_W - 4, cy), 1)
+        x = _lx(i, ctx)
+        pygame.draw.line(surf, (80, 35, 105), (x + 4, cy), (x + ctx.lane_w - 4, cy), 1)
     cl = F_XSM.render("collapse zone", True, (100, 45, 130))
-    surf.blit(cl, (lcx(0) - cl.get_width() // 2, cy - 14))
+    surf.blit(cl, (_lcx(0, ctx) - cl.get_width() // 2, cy - 14))
 
 
-def draw_hit_zone(surf):
+def draw_hit_zone(surf, ctx: RenderCtx):
     for i in range(N_LANES):
-        x       = lx(i)
-        scx     = lcx(i)
+        x       = _lx(i, ctx)
+        scx     = _lcx(i, ctx)
         r, g, b = LANE_C[i]
         hz      = pygame.Rect(x + 4, TARGET_Y - HIT_ZONE_H // 2,
-                              LANE_W - 8, HIT_ZONE_H)
+                              ctx.lane_w - 8, HIT_ZONE_H)
         pygame.draw.rect(surf, (r // 5, g // 5, b // 5), hz, border_radius=10)
         pygame.draw.rect(surf, (r // 2, g // 2, b // 2), hz, 2, border_radius=10)
         pygame.draw.line(surf, (r, g, b),
-                         (x + 6, TARGET_Y), (x + LANE_W - 6, TARGET_Y), 2)
+                         (x + 6, TARGET_Y), (x + ctx.lane_w - 6, TARGET_Y), 2)
         lbl = F_ARROW.render(ARROWS[i], True, (r, g, b))
         surf.blit(lbl, (scx - lbl.get_width() // 2,
                         TARGET_Y + HIT_ZONE_H // 2 + 5))
 
 
-def draw_classical(surf, note: Note):
+def draw_classical(surf, note: Note, ctx: RenderCtx):
     r, g, b = LANE_C[note.lane]
-    scx     = lcx(note.lane)
-    rect    = pygame.Rect(scx - NOTE_W // 2, int(note.y), NOTE_W, NOTE_H)
+    scx     = _lcx(note.lane, ctx)
+    nw      = ctx.note_w
+    rect    = pygame.Rect(scx - nw // 2, int(note.y), nw, NOTE_H)
     pygame.draw.rect(surf, (r // 3, g // 3, b // 3), rect, border_radius=9)
     pygame.draw.rect(surf, (r, g, b), rect, 3, border_radius=9)
     ar = F_ARROW.render(ARROWS[note.lane], True, (r, g, b))
@@ -729,11 +768,12 @@ def draw_classical(surf, note: Note):
                    int(note.y) + (NOTE_H - ar.get_height()) // 2))
 
 
-def draw_quantum(surf, note: Note):
+def draw_quantum(surf, note: Note, ctx: RenderCtx):
+    nw = ctx.note_w
     if note.collapsed:
         r, g, b = Q_PURPLE
-        cx   = lcx(note.lane)
-        rect = pygame.Rect(cx - NOTE_W // 2, int(note.y), NOTE_W, NOTE_H)
+        cx   = _lcx(note.lane, ctx)
+        rect = pygame.Rect(cx - nw // 2, int(note.y), nw, NOTE_H)
         pygame.draw.rect(surf, (r // 3, g // 3, b // 3), rect, border_radius=9)
         pygame.draw.rect(surf, (r, g, b), rect, 3, border_radius=9)
         ar = F_ARROW.render(ARROWS[note.lane], True, (r, g, b))
@@ -750,15 +790,15 @@ def draw_quantum(surf, note: Note):
     for gl in (note.lane, note.lane2):
         r, g, b = Q_PURPLE
         ri, gi, bi = int(r * af), int(g * af * 0.35), int(b * af)
-        cx   = lcx(gl)
-        rect = pygame.Rect(cx - NOTE_W // 2, int(note.y), NOTE_W, NOTE_H)
+        cx   = _lcx(gl, ctx)
+        rect = pygame.Rect(cx - nw // 2, int(note.y), nw, NOTE_H)
         pygame.draw.rect(surf, (ri // 3, gi // 3, bi // 3), rect, border_radius=9)
         pygame.draw.rect(surf, (ri, gi, bi), rect, 2, border_radius=9)
         qm = F_ARROW.render("?", True, (ri, gi, bi))
         surf.blit(qm, (cx - qm.get_width() // 2,
                        int(note.y) + (NOTE_H - qm.get_height()) // 2))
 
-    xa, xb = lcx(note.lane), lcx(note.lane2)
+    xa, xb = _lcx(note.lane, ctx), _lcx(note.lane2, ctx)
     x0, x1 = min(xa, xb), max(xa, xb)
     wy = int(note.y) + NOTE_H // 2
     pts = []
@@ -778,21 +818,22 @@ def draw_quantum(surf, note: Note):
         surf.blit(slb, (mx - slb.get_width() // 2, int(note.y) - 17))
 
 
-def draw_top(surf, ps: PlayerState, label: str = ""):
-    pygame.draw.rect(surf, (10, 8, 26), (0, 0, SW, TOP_H))
-    pygame.draw.line(surf, (55, 45, 100), (0, TOP_H - 1), (SW, TOP_H - 1))
+def draw_top(surf, ps: PlayerState, ctx: RenderCtx, label: str = ""):
+    sw = ctx.sw
+    pygame.draw.rect(surf, (10, 8, 26), (0, 0, sw, TOP_H))
+    pygame.draw.line(surf, (55, 45, 100), (0, TOP_H - 1), (sw, TOP_H - 1))
 
-    title_str = f"✦  QUANTUM DANCE  ✦" + (f"  —  {label}" if label else "")
+    title_str = "✦  QUANTUM DANCE  ✦" + (f"  —  {label}" if label else "")
     title = F_TITLE.render(title_str, True, Q_PURPLE)
-    surf.blit(title, (SW // 2 - title.get_width() // 2, 8))
+    surf.blit(title, (sw // 2 - title.get_width() // 2, 8))
 
     sc = F_MED.render(f"SCORE  {ps.score:07d}", True, GOLD)
     surf.blit(sc, (18, 10))
 
     cb = F_MED.render(f"COMBO  ×{ps.combo}", True, GOLD if ps.combo >= 10 else WHITE)
-    surf.blit(cb, (SW - cb.get_width() - 18, 10))
+    surf.blit(cb, (sw - cb.get_width() - 18, 10))
     mc = F_SM.render(f"best ×{ps.max_combo}", True, DIM)
-    surf.blit(mc, (SW - mc.get_width() - 18, 32))
+    surf.blit(mc, (sw - mc.get_width() - 18, 32))
     qc = F_SM.render(f"collapses: {q_collapsed}/{q_total}", True, (170, 70, 230))
     surf.blit(qc, (18, 34))
 
@@ -816,13 +857,14 @@ def draw_top(surf, ps: PlayerState, label: str = ""):
         "Classical notes: ONE lane.   "
         "Quantum notes: TWO lanes — collapse to one before the hit zone.",
         True, DIM)
-    surf.blit(sub, (SW // 2 - sub.get_width() // 2, 65))
+    surf.blit(sub, (sw // 2 - sub.get_width() // 2, 65))
 
 
-def draw_bottom(surf):
+def draw_bottom(surf, ctx: RenderCtx):
+    sw = ctx.sw
     y0 = SH - BOT_H
-    pygame.draw.rect(surf, (10, 8, 26), (0, y0, SW, BOT_H))
-    pygame.draw.line(surf, (55, 45, 100), (0, y0), (SW, y0))
+    pygame.draw.rect(surf, (10, 8, 26), (0, y0, sw, BOT_H))
+    pygame.draw.line(surf, (55, 45, 100), (0, y0), (sw, y0))
 
     pct = int(bias_slider.val)
     bias_txt = f"⬡  Quantum — 2 lanes, collapses {pct}% lane 1 / {100 - pct}% lane 2"
@@ -834,15 +876,15 @@ def draw_bottom(surf):
 
     if n_players == 2:
         hint = F_XSM.render("2P: entangled collapse — P1 & P2 get opposite lanes", True, (170, 70, 230))
-        surf.blit(hint, (SW - hint.get_width() - 18, y0 + 14))
+        surf.blit(hint, (sw - hint.get_width() - 18, y0 + 14))
         ctrl = F_XSM.render("P2 keys: A ↔  S ↓  W ↑  D →", True, DIM)
-        surf.blit(ctrl, (SW - ctrl.get_width() - 18, y0 + 31))
+        surf.blit(ctrl, (sw - ctrl.get_width() - 18, y0 + 31))
     else:
         lines = ["In quantum mechanics a particle can be",
                  "in multiple states until it is MEASURED."]
         for i, line in enumerate(lines):
             t = F_XSM.render(line, True, DIM)
-            surf.blit(t, (SW - t.get_width() - 18, y0 + 14 + i * 17))
+            surf.blit(t, (sw - t.get_width() - 18, y0 + 14 + i * 17))
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1032,6 +1074,7 @@ def start_game(num_players: int, song: dict):
     global q_collapsed, q_total, tick, spawn_timer, collapsed_outcomes, last_beat
     global win2, ren2, surf2
     global SONG_FILE, SONG_BPM, SONG_OFFSET, _active_beats_fall
+    global two_screen_mode, split_mode, ctx1, ctx2
     last_song = song
 
     n_players  = num_players
@@ -1044,33 +1087,58 @@ def start_game(num_players: int, song: dict):
     speed_mult         = DIFF_SPEED[song["difficulty"]]
     _active_beats_fall = max(2.0, BEATS_TO_FALL / speed_mult)
 
-    p1 = PlayerState(0, KEYS_P1)
-    p2 = PlayerState(1, KEYS_P2) if num_players == 2 else None
-
     q_collapsed = 0
     q_total     = 0
     tick        = 0
     spawn_timer = 55
     collapsed_outcomes = {}
     last_beat   = -1
+    Note._nid   = 0
 
-    Note._nid = 0
+    # Tear down any existing second window
+    if win2 is not None:
+        try: win2.destroy()
+        except Exception: pass
+    win2 = ren2 = surf2 = None
+    two_screen_mode = False
+    split_mode      = False
 
-    # Second window for 2P
     if num_players == 2:
         try:
-            from pygame._sdl2.video import Window, Renderer, Texture as _Tex
-            win2  = Window("Quantum Dance — Player 2", size=(SW, SH))
-            ren2  = Renderer(win2)
-            surf2 = pygame.Surface((SW, SH))
-        except Exception as e:
-            print(f"[WARNING] Could not open second window: {e}")
-            win2 = ren2 = surf2 = None
+            n_displays = pygame.display.get_num_displays()
+        except Exception:
+            n_displays = 1
+
+        if n_displays >= 2:
+            # Option A — two physical monitors
+            try:
+                from pygame._sdl2.video import Window, Renderer
+                two_screen_mode = True
+                split_mode      = False
+                win2  = Window("Quantum Dance — Player 2", size=(SW, SH),
+                               display_index=1)
+                ren2  = Renderer(win2)
+                surf2 = pygame.Surface((SW, SH))
+                ctx1  = make_ctx(SW)
+                ctx2  = make_ctx(SW)
+            except Exception as e:
+                print(f"[WARNING] Second monitor init failed, falling back to split: {e}")
+                two_screen_mode = False
+                win2 = ren2 = surf2 = None
+                split_mode = True
+                ctx1 = make_ctx(SW // 2)
+                ctx2 = make_ctx(SW // 2)
+        else:
+            # Option B — split-screen on one monitor
+            split_mode = True
+            ctx1 = make_ctx(SW // 2)
+            ctx2 = make_ctx(SW // 2)
     else:
-        if win2 is not None:
-            try: win2.destroy()
-            except Exception: pass
-        win2 = ren2 = surf2 = None
+        ctx1 = make_ctx(SW)
+        ctx2 = None
+
+    p1 = PlayerState(0, KEYS_P1, ctx1)
+    p2 = PlayerState(1, KEYS_P2, ctx2) if num_players == 2 else None
 
     # Music
     if SONG_FILE:
@@ -1083,6 +1151,7 @@ def start_game(num_players: int, song: dict):
 
 def stop_game():
     global game_state, win2, ren2, surf2, SONG_FILE
+    global two_screen_mode, split_mode, ctx1, ctx2
     game_state = GameState.MENU
     try: pygame.mixer.music.stop()
     except Exception: pass
@@ -1091,6 +1160,9 @@ def stop_game():
         try: win2.destroy()
         except Exception: pass
     win2 = ren2 = surf2 = None
+    two_screen_mode = False
+    split_mode      = False
+    ctx1 = ctx2 = None
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1121,43 +1193,44 @@ def update():
     if p2: p2.update(collapsed_outcomes)
 
 
-def _render_player(surf, ps: PlayerState, label: str = ""):
+def _render_player(surf, ps: PlayerState, ctx: RenderCtx, label: str = ""):
+    sw = ctx.sw
     surf.fill(BG)
-    draw_lanes(surf, ps.key_flash)
-    draw_hit_zone(surf)
+    draw_lanes(surf, ps.key_flash, ctx)
+    draw_hit_zone(surf, ctx)
 
     for note in ps.notes:
         if note.quantum:
-            draw_quantum(surf, note)
+            draw_quantum(surf, note, ctx)
         else:
-            draw_classical(surf, note)
+            draw_classical(surf, note, ctx)
 
     for p in ps.particles: p.draw(surf)
     for f in ps.floats:    f.draw(surf)
 
-    draw_top(surf, ps, label)
-    draw_bottom(surf)
+    draw_top(surf, ps, ctx, label)
+    draw_bottom(surf, ctx)
 
     # Milestone banner
     if ps.milestone_timer > 0:
         alpha = int(255 * ps.milestone_timer / 90)
         bsurf = F_TITLE.render(ps.milestone_text, True, Q_PURPLE)
         bsurf.set_alpha(alpha)
-        surf.blit(bsurf, (SW // 2 - bsurf.get_width() // 2, SH // 2 - 30))
+        surf.blit(bsurf, (sw // 2 - bsurf.get_width() // 2, SH // 2 - 30))
 
     # Screen flash on milestone
     if ps.flash_timer > 0:
-        fsurf = pygame.Surface((SW, SH), pygame.SRCALPHA)
+        fsurf = pygame.Surface((sw, SH), pygame.SRCALPHA)
         fsurf.fill((255, 255, 255, int(60 * ps.flash_timer / 8)))
         surf.blit(fsurf, (0, 0))
 
     # Dead overlay
     if ps.dead:
-        dsurf = pygame.Surface((SW, SH), pygame.SRCALPHA)
+        dsurf = pygame.Surface((sw, SH), pygame.SRCALPHA)
         dsurf.fill((80, 0, 0, 120))
         surf.blit(dsurf, (0, 0))
         dtxt = F_TITLE.render("FAILED", True, (255, 60, 60))
-        surf.blit(dtxt, (SW // 2 - dtxt.get_width() // 2, SH // 2 - 20))
+        surf.blit(dtxt, (sw // 2 - dtxt.get_width() // 2, SH // 2 - 20))
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1295,16 +1368,24 @@ def main():
         elif song_done and not p1.notes and (p2 is None or not p2.notes):
             game_state = GameState.RESULTS
 
-        # ── Render P1 → screen ────────────────────────────────────────────────
-        lbl = "PLAYER 1" if n_players == 2 else ""
-        _render_player(screen, p1, lbl)
-        pygame.display.flip()
+        # ── Render ────────────────────────────────────────────────────────────
+        if split_mode and n_players == 2 and p2 and ctx1 and ctx2:
+            # Option B: side-by-side subsurfaces on one window
+            screen.fill(BG)
+            left  = screen.subsurface(pygame.Rect(0,        0, SW // 2, SH))
+            right = screen.subsurface(pygame.Rect(SW // 2,  0, SW // 2, SH))
+            _render_player(left,  p1, ctx1, "P1")
+            _render_player(right, p2, ctx2, "P2")
+            pygame.draw.line(screen, (60, 50, 100), (SW // 2, 0), (SW // 2, SH), 1)
+            pygame.display.flip()
 
-        # ── Render P2 → win2 ─────────────────────────────────────────────────
-        if n_players == 2 and p2 and surf2 and ren2:
+        elif two_screen_mode and n_players == 2 and p2 and surf2 and ren2 and ctx1 and ctx2:
+            # Option A: separate SDL2 windows on two monitors
+            _render_player(screen, p1, ctx1, "PLAYER 1")
+            pygame.display.flip()
             try:
                 from pygame._sdl2.video import Texture
-                _render_player(surf2, p2, "PLAYER 2")
+                _render_player(surf2, p2, ctx2, "PLAYER 2")
                 tex = Texture.from_surface(ren2, surf2)
                 ren2.clear()
                 tex.draw()
@@ -1312,6 +1393,12 @@ def main():
                 tex.destroy()
             except Exception:
                 pass
+
+        else:
+            # 1P or fallback
+            lbl = "PLAYER 1" if n_players == 2 else ""
+            _render_player(screen, p1, ctx1 or make_ctx(SW), lbl)
+            pygame.display.flip()
 
 
 if __name__ == "__main__":
