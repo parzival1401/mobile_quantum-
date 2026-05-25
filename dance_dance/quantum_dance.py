@@ -475,17 +475,21 @@ class PlayerState:
         self.max_combo = 0
         self.key_flash = [0] * N_LANES
 
-    def handle_key(self, lane: int):
-        self.key_flash[lane] = 14
-        scx = lcx(lane)
+    def handle_key(self, key_idx: int):
+        # key_idx: physical key index (0–3), same for both players
+        # logical_lane: the note.lane value that falls at this key's screen column
+        mirror       = self.idx == 1
+        logical_lane = _mlane(key_idx, mirror)
+        self.key_flash[key_idx] = 14
+        scx = lcx(_mlane(key_idx, mirror))   # screen x where the note visually is
 
         best, best_d = None, 9999
         for note in self.notes:
             if not note.alive or note.hit: continue
             if note.quantum and not note.collapsed:
-                in_lane = lane in (note.lane, note.lane2)
+                in_lane = logical_lane in (note.lane, note.lane2)
             else:
-                in_lane = lane == note.lane
+                in_lane = logical_lane == note.lane
             if not in_lane: continue
             d = abs(note.cy() - TARGET_Y)
             if d < best_d: best_d, best = d, note
@@ -502,11 +506,11 @@ class PlayerState:
             if quality == "PERFECT":
                 self.score += 300 * max(1, self.combo // 5)
                 self.floats.append(FloatText("PERFECT!", scx, TARGET_Y - 42, GOLD, F_MED))
-                for _ in range(20): self.particles.append(Particle(scx, TARGET_Y, LANE_C[lane]))
+                for _ in range(20): self.particles.append(Particle(scx, TARGET_Y, LANE_C[logical_lane]))
             else:
                 self.score += 100 * max(1, self.combo // 10)
                 self.floats.append(FloatText("GOOD", scx, TARGET_Y - 42, WHITE))
-                for _ in range(9): self.particles.append(Particle(scx, TARGET_Y, LANE_C[lane]))
+                for _ in range(9): self.particles.append(Particle(scx, TARGET_Y, LANE_C[logical_lane]))
         else:
             self.combo = 0
             self.floats.append(FloatText("EARLY", scx, TARGET_Y - 42, (255, 180, 0)))
