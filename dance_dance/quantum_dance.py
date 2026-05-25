@@ -52,10 +52,40 @@ import pygame
 import sys
 import random
 import math
+import numpy as np
 from enum import Enum, auto
 
 pygame.init()
-pygame.mixer.init()
+pygame.mixer.init(frequency=44100, size=-16, channels=2, buffer=512)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Sound effects (procedurally generated — no audio files needed)
+# ─────────────────────────────────────────────────────────────────────────────
+def _make_tone(freq, duration_ms, vol=0.22, fade_ms=40):
+    sr   = 44100
+    n    = int(sr * duration_ms / 1000)
+    t    = np.linspace(0, duration_ms / 1000, n, False)
+    wave = np.sin(2 * np.pi * freq * t) * vol
+    fade = max(1, int(sr * fade_ms / 1000))
+    wave[-fade:] *= np.linspace(1, 0, fade)
+    arr  = (wave * 32767).astype(np.int16)
+    return pygame.sndarray.make_sound(np.column_stack([arr, arr]))
+
+try:
+    SFX_PERFECT   = _make_tone(880,  70)
+    SFX_GOOD      = _make_tone(660,  70)
+    SFX_MISS      = _make_tone(150, 110)
+    SFX_COLLAPSE  = _make_tone(440, 140)
+    SFX_MILESTONE = _make_tone(1047, 180)
+    _sfx_ok = True
+except Exception:
+    _sfx_ok = False
+
+def _play(sfx):
+    if _sfx_ok:
+        try: sfx.play()
+        except Exception: pass
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Screen & timing
@@ -73,10 +103,12 @@ class GameState(Enum):
     MENU        = auto()
     SONG_SELECT = auto()
     PLAYING     = auto()
+    RESULTS     = auto()
 
 game_state    = GameState.MENU
 n_players     = 1
 song_cursor   = 0      # highlighted row in song select screen
+last_song     = None   # dict of the last played song (for retry)
 
 # 2P window objects (created only when n_players == 2)
 win2  = None
@@ -162,6 +194,16 @@ SONGS = [
 
 DIFF_SPEED = {"Easy": 1.0, "Hard": 1.5, "Extreme": 2.0}
 DIFF_COLOR = {"Easy": (80, 220, 120), "Hard": (255, 180, 60), "Extreme": (255, 60, 60)}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Arcade constants
+# ─────────────────────────────────────────────────────────────────────────────
+MAX_HP           = 100
+HP_GAIN_PERFECT  =  2
+HP_GAIN_GOOD     =  1
+HP_LOSS_MISS     = 10
+HP_LOSS_QUANTUM  =  8
+COMBO_MILESTONES = [10, 25, 50, 100, 200]
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Layout constants
@@ -474,8 +516,20 @@ class PlayerState:
         self.combo     = 0
         self.max_combo = 0
         self.key_flash = [0] * N_LANES
+        # Arcade stats
+        self.hp             = MAX_HP
+        self.dead           = False
+        self.perfect_count  = 0
+        self.good_count     = 0
+        self.miss_count     = 0
+        self.total_notes    = 0
+        self.last_milestone = 0
+        self.milestone_timer = 0   # frames remaining to show banner
+        self.milestone_text  = ""
+        self.flash_timer     = 0   # frames for screen-wide white flash
 
     def handle_key(self, key_idx: int):
+        if self.dead: return
         lane = key_idx
         self.key_flash[lane] = 14
         scx = lcx(lane)
@@ -493,7 +547,12 @@ class PlayerState:
 
         if best is None or best_d > HIT_GOOD:
             self.combo = 0
+            self.last_milestone = 0
+            self.hp = max(0, self.hp - HP_LOSS_MISS)
+            self.miss_count += 1
             self.floats.append(FloatText("MISS", scx, TARGET_Y - 42, RED))
+            _play(SFX_MISS)
+            if self.hp == 0: self.dead = True
             return
 
         quality = best.in_hit_zone()
@@ -502,15 +561,34 @@ class PlayerState:
             self.combo += 1
             if quality == "PERFECT":
                 self.score += 300 * max(1, self.combo // 5)
+                self.hp = min(MAX_HP, self.hp + HP_GAIN_PERFECT)
+                self.perfect_count += 1
                 self.floats.append(FloatText("PERFECT!", scx, TARGET_Y - 42, GOLD, F_MED))
                 for _ in range(20): self.particles.append(Particle(scx, TARGET_Y, LANE_C[lane]))
+                _play(SFX_PERFECT)
             else:
                 self.score += 100 * max(1, self.combo // 10)
+                self.hp = min(MAX_HP, self.hp + HP_GAIN_GOOD)
+                self.good_count += 1
                 self.floats.append(FloatText("GOOD", scx, TARGET_Y - 42, WHITE))
                 for _ in range(9): self.particles.append(Particle(scx, TARGET_Y, LANE_C[lane]))
+                _play(SFX_GOOD)
+            # Milestone check
+            for m in COMBO_MILESTONES:
+                if self.combo >= m and self.last_milestone < m:
+                    self.last_milestone  = m
+                    self.milestone_text  = f"COMBO  ×{m}!"
+                    self.milestone_timer = 90
+                    self.flash_timer     = 8
+                    _play(SFX_MILESTONE)
         else:
             self.combo = 0
+            self.last_milestone = 0
+            self.hp = max(0, self.hp - HP_LOSS_MISS)
+            self.miss_count += 1
             self.floats.append(FloatText("EARLY", scx, TARGET_Y - 42, (255, 180, 0)))
+            _play(SFX_MISS)
+            if self.hp == 0: self.dead = True
 
     def update(self, collapsed_outcomes: dict):
         for note in self.notes:
@@ -523,9 +601,14 @@ class PlayerState:
                     "COLLAPSED!", cx,
                     TARGET_Y - 42 + int(note.y - TARGET_Y) + NOTE_H // 2,
                     Q_PURPLE, F_SM))
+                _play(SFX_COLLAPSE)
             if note.just_missed:
                 self.combo = 0
+                self.last_milestone = 0
+                self.hp = max(0, self.hp - HP_LOSS_QUANTUM)
+                self.miss_count += 1
                 self.floats.append(FloatText("MISS", lcx(note.lane), TARGET_Y - 42, RED))
+                if self.hp == 0: self.dead = True
 
         self.notes[:]     = [n for n in self.notes     if n.alive]
         self.max_combo    = max(self.max_combo, self.combo)
@@ -535,6 +618,8 @@ class PlayerState:
         self.floats[:]    = [f for f in self.floats    if f.life > 0]
         for i in range(N_LANES):
             if self.key_flash[i] > 0: self.key_flash[i] -= 1
+        if self.milestone_timer > 0: self.milestone_timer -= 1
+        if self.flash_timer     > 0: self.flash_timer     -= 1
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -567,16 +652,20 @@ def spawn_note():
         Note._nid += 1
         nid = Note._nid
         p1.notes.append(Note(a, quantum=True, lane2=b, nid=nid, wave_phase=wp))
+        p1.total_notes += 1
         if n_players == 2:
             p2.notes.append(Note(a, quantum=True, lane2=b, nid=nid, wave_phase=wp))
+            p2.total_notes += 1
         q_total += 1
     else:
         lane = random.randint(0, N_LANES - 1)
         Note._nid += 1
         nid = Note._nid
         p1.notes.append(Note(lane, nid=nid))
+        p1.total_notes += 1
         if n_players == 2:
             p2.notes.append(Note(_m(lane), nid=nid))
+            p2.total_notes += 1
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -707,11 +796,27 @@ def draw_top(surf, ps: PlayerState, label: str = ""):
     qc = F_SM.render(f"collapses: {q_collapsed}/{q_total}", True, (170, 70, 230))
     surf.blit(qc, (18, 34))
 
+    # Health bar
+    bar_x, bar_y, bar_w, bar_h = 18, 52, 200, 8
+    frac = ps.hp / MAX_HP
+    if frac > 0.6:
+        hcol = (40, 200, 80)
+    elif frac > 0.3:
+        hcol = (220, 180, 0)
+    else:
+        hcol = (220, 40, 40)
+    pygame.draw.rect(surf, (30, 25, 50), (bar_x, bar_y, bar_w, bar_h), border_radius=4)
+    if frac > 0:
+        pygame.draw.rect(surf, hcol, (bar_x, bar_y, int(bar_w * frac), bar_h), border_radius=4)
+    pygame.draw.rect(surf, (80, 70, 120), (bar_x, bar_y, bar_w, bar_h), 1, border_radius=4)
+    hp_lbl = F_XSM.render(f"HP  {ps.hp}/{MAX_HP}", True, hcol)
+    surf.blit(hp_lbl, (bar_x + bar_w + 6, bar_y - 1))
+
     sub = F_XSM.render(
         "Classical notes: ONE lane.   "
         "Quantum notes: TWO lanes — collapse to one before the hit zone.",
         True, DIM)
-    surf.blit(sub, (SW // 2 - sub.get_width() // 2, 57))
+    surf.blit(sub, (SW // 2 - sub.get_width() // 2, 65))
 
 
 def draw_bottom(surf):
@@ -860,13 +965,74 @@ def draw_song_select(cursor: int, num_players: int) -> list:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Grade + results helpers
+# ─────────────────────────────────────────────────────────────────────────────
+def _grade(accuracy: float) -> str:
+    if accuracy >= 0.95: return "S"
+    if accuracy >= 0.80: return "A"
+    if accuracy >= 0.60: return "B"
+    if accuracy >= 0.40: return "C"
+    return "F"
+
+
+def _draw_results_panel(surf, ps: PlayerState, cx: int, cy: int, title: str):
+    total  = max(1, ps.total_notes)
+    hits   = ps.perfect_count + ps.good_count
+    acc    = hits / total
+    grade  = _grade(acc)
+    gcol   = {"S": (255,215,0), "A": (100,255,120), "B": (80,180,255),
+               "C": (255,180,60), "F": (255,60,60)}[grade]
+
+    rows = [
+        (f"SCORE",    f"{ps.score:07d}",          GOLD),
+        (f"GRADE",    grade,                       gcol),
+        (f"ACCURACY", f"{acc * 100:.1f}%",         WHITE),
+        (f"MAX COMBO",f"×{ps.max_combo}",          WHITE),
+        (f"PERFECT",  f"{ps.perfect_count}",       (100, 255, 120)),
+        (f"GOOD",     f"{ps.good_count}",          (80, 200, 255)),
+        (f"MISS",     f"{ps.miss_count}",          RED),
+    ]
+    lbl = F_MED.render(title, True, Q_PURPLE)
+    surf.blit(lbl, (cx - lbl.get_width() // 2, cy - 130))
+    for i, (key, val, col) in enumerate(rows):
+        ky = cy - 90 + i * 30
+        k_surf = F_SM.render(key, True, DIM)
+        v_surf = F_SM.render(val, True, col)
+        surf.blit(k_surf, (cx - 110, ky))
+        surf.blit(v_surf, (cx + 110 - v_surf.get_width(), ky))
+
+
+def draw_results():
+    screen.fill(BG)
+    title = F_TITLE.render("✦  RESULTS  ✦", True, Q_PURPLE)
+    screen.blit(title, (SW // 2 - title.get_width() // 2, 30))
+
+    if last_song:
+        song_lbl = F_MED.render(
+            f"{last_song['title']}  —  {last_song['artist']}", True, DIM)
+        screen.blit(song_lbl, (SW // 2 - song_lbl.get_width() // 2, 72))
+
+    if n_players == 2 and p2:
+        _draw_results_panel(screen, p1, SW // 4,     SH // 2, "PLAYER 1")
+        _draw_results_panel(screen, p2, SW * 3 // 4, SH // 2, "PLAYER 2")
+        pygame.draw.line(screen, (60, 50, 100), (SW // 2, 100), (SW // 2, SH - 60), 1)
+    else:
+        _draw_results_panel(screen, p1, SW // 2, SH // 2, "")
+
+    hint = F_SM.render("R  retry     ESC  menu", True, (80, 70, 120))
+    screen.blit(hint, (SW // 2 - hint.get_width() // 2, SH - 48))
+    pygame.display.flip()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Game init / reset
 # ─────────────────────────────────────────────────────────────────────────────
 def start_game(num_players: int, song: dict):
-    global n_players, game_state, p1, p2
+    global n_players, game_state, p1, p2, last_song
     global q_collapsed, q_total, tick, spawn_timer, collapsed_outcomes, last_beat
     global win2, ren2, surf2
     global SONG_FILE, SONG_BPM, SONG_OFFSET, _active_beats_fall
+    last_song = song
 
     n_players  = num_players
     game_state = GameState.PLAYING
@@ -972,6 +1138,27 @@ def _render_player(surf, ps: PlayerState, label: str = ""):
     draw_top(surf, ps, label)
     draw_bottom(surf)
 
+    # Milestone banner
+    if ps.milestone_timer > 0:
+        alpha = int(255 * ps.milestone_timer / 90)
+        bsurf = F_TITLE.render(ps.milestone_text, True, Q_PURPLE)
+        bsurf.set_alpha(alpha)
+        surf.blit(bsurf, (SW // 2 - bsurf.get_width() // 2, SH // 2 - 30))
+
+    # Screen flash on milestone
+    if ps.flash_timer > 0:
+        fsurf = pygame.Surface((SW, SH), pygame.SRCALPHA)
+        fsurf.fill((255, 255, 255, int(60 * ps.flash_timer / 8)))
+        surf.blit(fsurf, (0, 0))
+
+    # Dead overlay
+    if ps.dead:
+        dsurf = pygame.Surface((SW, SH), pygame.SRCALPHA)
+        dsurf.fill((80, 0, 0, 120))
+        surf.blit(dsurf, (0, 0))
+        dtxt = F_TITLE.render("FAILED", True, (255, 60, 60))
+        surf.blit(dtxt, (SW // 2 - dtxt.get_width() // 2, SH // 2 - 20))
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Collapse counting (shared, tracked by P1 note just_collapsed events)
@@ -985,7 +1172,8 @@ _seen_collapsed_nids: set = set()
 # ─────────────────────────────────────────────────────────────────────────────
 def main():
     global game_state, q_collapsed, _seen_collapsed_nids
-    global n_players, song_cursor
+    global n_players, song_cursor, last_song
+    _results_timer = 0   # frames to wait after death before showing results
 
     btn1_rect = btn2_rect = None
     song_rects: list = []
@@ -1051,6 +1239,19 @@ def main():
                             start_game(n_players, SONGS[song_cursor])
             continue
 
+        # ── RESULTS ───────────────────────────────────────────────────────────
+        if game_state == GameState.RESULTS:
+            draw_results()
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    pygame.quit(); sys.exit()
+                elif event.type == pygame.KEYDOWN:
+                    if event.key == pygame.K_ESCAPE:
+                        stop_game()
+                    elif event.key == pygame.K_r and last_song:
+                        start_game(n_players, last_song)
+            continue
+
         # ── PLAYING ───────────────────────────────────────────────────────────
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
@@ -1075,12 +1276,24 @@ def main():
                         if event.key == k:
                             p2.handle_key(i)
 
-
         update()
         for nid in collapsed_outcomes:
             if nid not in _seen_collapsed_nids:
                 _seen_collapsed_nids.add(nid)
                 q_collapsed += 1
+
+        # ── Transition to RESULTS ─────────────────────────────────────────────
+        song_done = SONG_FILE and not pygame.mixer.music.get_busy()
+        any_dead  = p1.dead or (p2 is not None and p2.dead)
+        if any_dead:
+            _results_timer += 1
+            if _results_timer >= 90:   # ~1.5s delay so "FAILED" is visible
+                _results_timer = 0
+                game_state = GameState.RESULTS
+                try: pygame.mixer.music.stop()
+                except Exception: pass
+        elif song_done and not p1.notes and (p2 is None or not p2.notes):
+            game_state = GameState.RESULTS
 
         # ── Render P1 → screen ────────────────────────────────────────────────
         lbl = "PLAYER 1" if n_players == 2 else ""
