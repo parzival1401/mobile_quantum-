@@ -945,7 +945,6 @@ def update():
 
 def _render_player(surf, ps: PlayerState, label: str = ""):
     surf.fill(BG)
-    draw_panels(surf)
     draw_lanes(surf, ps.key_flash)
     draw_hit_zone(surf)
 
@@ -957,9 +956,6 @@ def _render_player(surf, ps: PlayerState, label: str = ""):
 
     for p in ps.particles: p.draw(surf)
     for f in ps.floats:    f.draw(surf)
-
-    for sl in active_sliders():
-        sl.draw(surf)
 
     draw_top(surf, ps, label)
     draw_bottom(surf)
@@ -1067,8 +1063,6 @@ def main():
                         if event.key == k:
                             p2.handle_key(i)
 
-            for sl in active_sliders():
-                sl.handle_event(event)
 
         update()
         for nid in collapsed_outcomes:
