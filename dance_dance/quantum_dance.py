@@ -93,8 +93,9 @@ def _play(sfx):
 # ─────────────────────────────────────────────────────────────────────────────
 # Screen & timing
 # ─────────────────────────────────────────────────────────────────────────────
-SW, SH = 1080, 1920
-FPS    = 60
+SW, SH    = 1080, 1920
+FPS       = 60
+_LOW_PERF = True   # True = Raspberry Pi: skip stars/scanlines, cap 30 FPS
 screen = pygame.display.set_mode((SW, SH))
 pygame.display.set_caption("Quantum Dance  |  Quantum Exhibition")
 clk    = pygame.time.Clock()
@@ -273,28 +274,69 @@ _P2_KEY_MAP = [3, 2, 1, 0]
 # ─────────────────────────────────────────────────────────────────────────────
 # Pre-baked surfaces and caches (built once, reused every frame)
 # ─────────────────────────────────────────────────────────────────────────────
+
+# Scanlines — only built when needed (skipped in _LOW_PERF mode)
 def _make_scanlines(w, h, alpha=28, step=4):
     s = pygame.Surface((w, h), pygame.SRCALPHA)
     for y in range(0, h, step):
         pygame.draw.line(s, (0, 0, 0, alpha), (0, y), (w, y))
     return s
 
-_SCAN_FULL  = _make_scanlines(SW, SH)
-_SCAN_LANES = _make_scanlines(SW, LANE_BOT - LANE_TOP)
+_SCAN_FULL  = None if _LOW_PERF else _make_scanlines(SW, SH)
+_SCAN_LANES = None if _LOW_PERF else _make_scanlines(SW, LANE_BOT - LANE_TOP)
 
-# Pre-baked starfields (static positions, only twinkle varies)
+# Pre-baked starfields (static positions, only twinkle varies — skipped in LOW_PERF)
 def _make_star_positions(n, w, y0, y1, seed):
     rng = random.Random(seed)
     return [(rng.randint(0, w), rng.randint(y0, y1)) for _ in range(n)]
 
-_STARS_MENU  = _make_star_positions(120, SW, 0,        SH,       7)
-_STARS_LANES = _make_star_positions(60,  SW, LANE_TOP, LANE_BOT, 13)
-_STARS_SEL   = _make_star_positions(100, SW, 0,        SH,       42)
+_STARS_MENU    = [] if _LOW_PERF else _make_star_positions(120, SW, 0,        SH,       7)
+_STARS_LANES   = [] if _LOW_PERF else _make_star_positions(60,  SW, LANE_TOP, LANE_BOT, 13)
+_STARS_SEL     = [] if _LOW_PERF else _make_star_positions(100, SW, 0,        SH,       42)
+_STARS_RESULTS = _make_star_positions(40, SW, 0, SH, 99)   # results always uses pre-baked list
 
 # Pre-rendered arrow surfaces per lane (static color)
 _ARROW_SURFS = [F_ARROW.render(a, True, LANE_C[i]) for i, a in enumerate(["←","↓","↑","→"])]
 
-# Cache for rainbow title characters: (char, r, g, b) → Surface
+# Pre-baked animated border strips (30-frame cycle, plain surfaces — fast blit)
+_BORDER_COLS_TOP = [(255,60,180),(255,160,0),(80,255,80),(0,200,255),(200,80,255)]
+_BORDER_COLS_BOT = [(0,200,255),(200,80,255),(255,60,180),(255,160,0),(80,255,80)]
+_TOP_BORDER_FRAMES: list = []
+_BOT_BORDER_FRAMES: list = []
+for _phase in range(30):
+    _pulse = 0.6 + 0.4 * math.sin(_phase * math.tau / 30)
+    _st = pygame.Surface((SW, 6))
+    _sb = pygame.Surface((SW, 6))
+    for _i, (_ct, _cb) in enumerate(zip(_BORDER_COLS_TOP, _BORDER_COLS_BOT)):
+        _ct2 = tuple(min(255, int(v * _pulse * 0.9)) for v in _ct)
+        _cb2 = tuple(min(255, int(v * _pulse * 0.9)) for v in _cb)
+        pygame.draw.line(_st, _ct2, (0, _i), (SW, _i))
+        pygame.draw.line(_sb, _cb2, (0, _i), (SW, _i))
+    _TOP_BORDER_FRAMES.append(_st)
+    _BOT_BORDER_FRAMES.append(_sb)
+
+# Pre-baked song-select active row glow (built on first use)
+_ROW_GLOW: pygame.Surface = None
+
+def _get_row_glow(w, h):
+    global _ROW_GLOW
+    if _ROW_GLOW is None:
+        s = pygame.Surface((w + 16, h + 16), pygame.SRCALPHA)
+        pygame.draw.rect(s, (*Q_PURPLE, 20), (0, 0, w + 16, h + 16), border_radius=12)
+        _ROW_GLOW = s
+    return _ROW_GLOW
+
+# Pre-baked menu button glows — keyed by base color tuple
+_BTN_GLOWS: dict = {}
+
+def _get_btn_glow(w, h, color):
+    if color not in _BTN_GLOWS:
+        s = pygame.Surface((w + 36, h + 36), pygame.SRCALPHA)
+        pygame.draw.rect(s, (*color, 25), (0, 0, w + 36, h + 36), border_radius=14)
+        _BTN_GLOWS[color] = s
+    return _BTN_GLOWS[color]
+
+# Cache for rainbow title characters: (char, r, g, b, font_id) → Surface
 _RAINBOW_CACHE: dict = {}
 
 def _rainbow_char(ch: str, r: int, g: int, b: int, font) -> pygame.Surface:
@@ -823,18 +865,18 @@ def draw_panels(surf):
 
 
 def draw_lanes(surf, key_flash, ctx: RenderCtx):
-    # Starfield — pre-baked positions, only brightness varies
-    for j, (sx, sy) in enumerate(_STARS_LANES):
-        twinkle = 0.4 + 0.6 * math.sin(tick * 0.04 + j * 0.53)
-        br = max(0, min(240, int(55 * twinkle)))
-        pygame.draw.circle(surf, (br, br, min(255, br + 15)), (sx, sy), 1)
+    # Starfield — skipped in LOW_PERF mode
+    if not _LOW_PERF:
+        for j, (sx, sy) in enumerate(_STARS_LANES):
+            twinkle = 0.4 + 0.6 * math.sin(tick * 0.04 + j * 0.53)
+            br = max(0, min(240, int(55 * twinkle)))
+            pygame.draw.circle(surf, (br, br, min(255, br + 15)), (sx, sy), 1)
 
     for i in range(N_LANES):
         x    = _lx(i, ctx)
         rect = pygame.Rect(x, LANE_TOP, ctx.lane_w, LANE_BOT - LANE_TOP)
         pygame.draw.rect(surf, (6, 4, 18), rect)
         r, g, b = LANE_C[i]
-        # Neon side borders
         pygame.draw.line(surf, (r//3, g//3, b//3), (x, LANE_TOP), (x, LANE_BOT), 2)
         pygame.draw.line(surf, (r//3, g//3, b//3), (x + ctx.lane_w - 1, LANE_TOP),
                          (x + ctx.lane_w - 1, LANE_BOT), 2)
@@ -842,16 +884,17 @@ def draw_lanes(surf, key_flash, ctx: RenderCtx):
             pygame.draw.rect(surf, (r//3, g//3, b//3),
                              (x, LANE_TOP, ctx.lane_w, LANE_BOT - LANE_TOP))
 
-    surf.blit(_SCAN_LANES, (0, LANE_TOP))
+    if not _LOW_PERF and _SCAN_LANES:
+        surf.blit(_SCAN_LANES, (0, LANE_TOP))
 
-    # Collapse zone — pulsing neon line
-    cy  = get_collapse_y()
+    # Collapse zone
+    cy = get_collapse_y()
     col_pulse = int(120 + 80 * math.sin(tick * 0.08))
     for i in range(N_LANES):
         x = _lx(i, ctx)
         pygame.draw.line(surf, (col_pulse, 20, col_pulse),
                          (x + 4, cy), (x + ctx.lane_w - 4, cy), 2)
-    cl = F_XSM.render("◆ COLLAPSE ZONE ◆", True, (col_pulse, 40, col_pulse))
+    cl = _tcache(('czlbl', col_pulse // 20), "◆ COLLAPSE ZONE ◆", F_XSM, (col_pulse, 40, col_pulse))
     surf.blit(cl, (_lcx(0, ctx) - cl.get_width() // 2, cy - 15))
 
 
@@ -941,13 +984,8 @@ def draw_quantum(surf, note: Note, ctx: RenderCtx):
 def draw_top(surf, ps: PlayerState, ctx: RenderCtx, label: str = ""):
     sw = ctx.sw
     pygame.draw.rect(surf, (4, 2, 14), (0, 0, sw, TOP_H))
-
-    # Animated neon border at bottom of header
-    pulse = 0.6 + 0.4 * math.sin(tick * 0.07)
-    cols  = [(255,60,180),(255,160,0),(80,255,80),(0,200,255),(200,80,255)]
-    for i, col in enumerate(cols):
-        c = tuple(min(255, int(v * pulse * 0.8)) for v in col)
-        pygame.draw.line(surf, c, (0, TOP_H - 1 - i), (sw, TOP_H - 1 - i))
+    # Pre-baked animated border (30-frame cycle, plain surface blit)
+    surf.blit(_TOP_BORDER_FRAMES[tick % 30], (0, TOP_H - 6))
 
     # Rainbow cycling title — cached per character/color combo
     title_str = "QUANTUM DANCE" + (f"  —  {label}" if label else "")
@@ -981,13 +1019,8 @@ def draw_bottom(surf, ctx: RenderCtx):
     sw = ctx.sw
     y0 = SH - BOT_H
     pygame.draw.rect(surf, (4, 2, 14), (0, y0, sw, BOT_H))
-
-    # Neon top border matching header style
-    pulse = 0.6 + 0.4 * math.sin(tick * 0.07 + 1.5)
-    cols  = [(0,200,255),(200,80,255),(255,60,180),(255,160,0),(80,255,80)]
-    for i, col in enumerate(cols):
-        c = tuple(min(255, int(v * pulse * 0.8)) for v in col)
-        pygame.draw.line(surf, c, (0, y0 + i), (sw, y0 + i))
+    # Pre-baked animated border
+    surf.blit(_BOT_BORDER_FRAMES[tick % 30], (0, y0))
 
     pct = int(bias_slider.val)
     bias_txt = f"⬡  Quantum — 2 lanes  |  {pct}% lane 1 / {100-pct}% lane 2"
@@ -1022,24 +1055,22 @@ def draw_menu():
 
     screen.fill((4, 2, 14))
 
-    # ── Starfield — pre-baked positions ──────────────────────────────────────
-    for j, (sx, sy) in enumerate(_STARS_MENU):
-        twinkle = 0.5 + 0.5 * math.sin(t * 0.05 + j * 0.41)
-        br = max(0, min(235, int(80 * twinkle)))
-        pygame.draw.circle(screen, (br, br, min(255, br + 20)), (sx, sy), 1)
+    # ── Starfield — skipped in LOW_PERF ──────────────────────────────────────
+    if not _LOW_PERF:
+        for j, (sx, sy) in enumerate(_STARS_MENU):
+            twinkle = 0.5 + 0.5 * math.sin(t * 0.05 + j * 0.41)
+            br = max(0, min(235, int(80 * twinkle)))
+            pygame.draw.circle(screen, (br, br, min(255, br + 20)), (sx, sy), 1)
+        if _SCAN_FULL:
+            screen.blit(_SCAN_FULL, (0, 0))
 
-    screen.blit(_SCAN_FULL, (0, 0))
+    # ── Marquee border (pre-baked frame cycle) ────────────────────────────────
+    screen.blit(_TOP_BORDER_FRAMES[t % 30], (0, 0))
+    screen.blit(_TOP_BORDER_FRAMES[t % 30], (0, SH - 6))
 
-    # ── Marquee border ────────────────────────────────────────────────────────
-    cols = [(255,60,180),(255,160,0),(80,255,80),(0,200,255),(200,80,255)]
-    for i, col in enumerate(cols):
-        alpha = int(180 + 75 * math.sin(t * 0.07 + i * 1.2))
-        c = tuple(min(255, int(v * alpha / 255)) for v in col)
-        pygame.draw.rect(screen, c, (i*3, i*3, SW - i*6, SH - i*6), 2)
-
-    # ── Blinking "INSERT COIN" at top ─────────────────────────────────────────
+    # ── Blinking "INSERT COIN" ────────────────────────────────────────────────
     if (t // 22) % 2 == 0:
-        coin = F_MENUSM.render("► INSERT COIN ◄", True, (255, 230, 0))
+        coin = _tcache('insert_coin', "► INSERT COIN ◄", F_MENUSM, (255, 230, 0))
         screen.blit(coin, (SW // 2 - coin.get_width() // 2, 28))
 
     # ── Rainbow cycling title — cached chars ─────────────────────────────────
@@ -1061,20 +1092,23 @@ def draw_menu():
         screen.blit(cs, (tx, ty))
         tx += cs.get_width()
 
-    # ── Subtitle ─────────────────────────────────────────────────────────────
-    sub_col = (int(160 + 60 * math.sin(t * 0.04)),
-               int(100 + 60 * math.sin(t * 0.04 + 1)),
-               int(200 + 55 * math.sin(t * 0.04 + 2)))
-    sub = F_MENUSM.render("CLASSICAL  vs  QUANTUM  COMPUTING", True, sub_col)
+    # ── Subtitle — quantized color to reduce re-renders ──────────────────────
+    sub_bucket = (t // 8) % 45
+    sub_col = (max(0, min(255, int(160 + 60 * math.sin(sub_bucket * 0.14)))),
+               max(0, min(255, int(100 + 60 * math.sin(sub_bucket * 0.14 + 1)))),
+               max(0, min(255, int(200 + 55 * math.sin(sub_bucket * 0.14 + 2)))))
+    sub = _tcache(('menu_sub', sub_bucket), "CLASSICAL  vs  QUANTUM  COMPUTING",
+                  F_MENUSM, sub_col)
     screen.blit(sub, (SW // 2 - sub.get_width() // 2, SH // 2 - 130))
 
-    # ── Buttons ───────────────────────────────────────────────────────────────
+    # ── Buttons — pre-baked glow ──────────────────────────────────────────────
     btn_w, btn_h = 300, 64
     gap  = 22
     bx   = SW // 2 - btn_w // 2
     by1  = SH // 2 - 30
     by2  = by1 + btn_h + gap
     mx, my = pygame.mouse.get_pos()
+    pulse = 0.7 + 0.3 * math.sin(t * 0.10)
 
     for by, label, key_hint, base_col in [
         (by1, "1  PLAYER",  "PRESS  1", (0, 180, 255)),
@@ -1082,41 +1116,34 @@ def draw_menu():
     ]:
         rect  = pygame.Rect(bx, by, btn_w, btn_h)
         hover = rect.collidepoint(mx, my)
-        pulse = 0.7 + 0.3 * math.sin(t * 0.10)
         r, g, b = base_col
         bcol  = (int(r * pulse), int(g * pulse), int(b * pulse))
 
-        # Glow
-        for gw in (18, 10, 4):
-            gs = pygame.Surface((btn_w + gw*2, btn_h + gw*2), pygame.SRCALPHA)
-            alpha = int(40 * (1 - gw / 20)) if hover else int(18 * (1 - gw / 20))
-            pygame.draw.rect(gs, (*bcol, alpha),
-                             (0, 0, btn_w + gw*2, btn_h + gw*2), border_radius=10)
-            screen.blit(gs, (bx - gw, by - gw))
+        # Pre-baked glow — single blit with set_alpha
+        glow = _get_btn_glow(btn_w, btn_h, base_col)
+        glow.set_alpha(int(220 * pulse) if hover else int(100 * pulse))
+        screen.blit(glow, (bx - 18, by - 18))
 
         fill = (int(r*0.18), int(g*0.18), int(b*0.18))
-        pygame.draw.rect(screen, fill,   rect, border_radius=8)
-        pygame.draw.rect(screen, bcol,   rect, 2, border_radius=8)
+        pygame.draw.rect(screen, fill,  rect, border_radius=8)
+        pygame.draw.rect(screen, bcol,  rect, 2, border_radius=8)
 
-        lbl = F_MENU.render(label, True, WHITE if hover else bcol)
-        screen.blit(lbl, (rect.centerx - lbl.get_width() // 2,
-                          rect.centery - lbl.get_height() // 2))
-        hint = F_XSM.render(key_hint, True, (120, 110, 160))
+        lbl  = _tcache(('btn_lbl', label, hover), label, F_MENU, WHITE if hover else bcol)
+        hint = _tcache(('btn_hint', key_hint), key_hint, F_XSM, (120, 110, 160))
+        screen.blit(lbl,  (rect.centerx - lbl.get_width() // 2,
+                           rect.centery - lbl.get_height() // 2))
         screen.blit(hint, (rect.right + 12, rect.centery - hint.get_height() // 2))
 
-    # ── Arrow decoration ──────────────────────────────────────────────────────
+    # ── Arrow decoration — use pre-baked arrow surfaces ───────────────────────
     arrow_y = SH // 2 + 110
-    for i, (arrow, col) in enumerate(zip(
-        ["←", "↓", "↑", "→"], LANE_C
-    )):
+    for i, ar in enumerate(_ARROW_SURFS):
         bounce = int(5 * math.sin(t * 0.12 + i * 0.8))
-        as_ = F_TITLE.render(arrow, True, col)
-        ax  = SW // 2 - 90 + i * 60
-        screen.blit(as_, (ax - as_.get_width() // 2, arrow_y + bounce))
+        ax = SW // 2 - 90 + i * 60
+        screen.blit(ar, (ax - ar.get_width() // 2, arrow_y + bounce))
 
     # ── Bottom hint ───────────────────────────────────────────────────────────
-    ctrl = F_XSM.render("P1: ← ↓ ↑ →     2P adds: A S W D",
-                         True, (70, 60, 100))
+    ctrl = _tcache('menu_ctrl', "P1: ← ↓ ↑ →     2P adds: A S W D",
+                   F_XSM, (70, 60, 100))
     screen.blit(ctrl, (SW // 2 - ctrl.get_width() // 2, SH - 28))
 
     pygame.display.flip()
@@ -1132,20 +1159,20 @@ def draw_song_select(cursor: int, num_players: int) -> list:
     t = _menu_tick
     screen.fill((4, 2, 14))
 
-    # Starfield — pre-baked positions
-    for j, (sx, sy) in enumerate(_STARS_SEL):
-        twinkle = 0.4 + 0.6 * math.sin(t * 0.04 + j * 0.47)
-        br = max(0, min(240, int(50 * twinkle)))
-        pygame.draw.circle(screen, (br, br, min(255, br + 15)), (sx, sy), 1)
+    # Starfield — skipped in LOW_PERF
+    if not _LOW_PERF:
+        for j, (sx, sy) in enumerate(_STARS_SEL):
+            twinkle = 0.4 + 0.6 * math.sin(t * 0.04 + j * 0.47)
+            br = max(0, min(240, int(50 * twinkle)))
+            pygame.draw.circle(screen, (br, br, min(255, br + 15)), (sx, sy), 1)
+        if _SCAN_FULL:
+            screen.blit(_SCAN_FULL, (0, 0))
 
-    # Marquee border
-    cols = [(255,60,180),(255,160,0),(80,255,80),(0,200,255),(200,80,255)]
-    pulse = 0.6 + 0.4 * math.sin(t * 0.07)
-    for i, col in enumerate(cols):
-        c = tuple(min(255, int(v * pulse * 0.7)) for v in col)
-        pygame.draw.rect(screen, c, (i*3, i*3, SW - i*6, SH - i*6), 2)
+    # Marquee border — pre-baked
+    screen.blit(_TOP_BORDER_FRAMES[t % 30], (0, 0))
+    screen.blit(_TOP_BORDER_FRAMES[t % 30], (0, SH - 6))
 
-    # Rainbow title
+    # Rainbow title — use cache
     title_str = "SELECT  SONG"
     tx = SW // 2 - sum(F_TITLE.size(ch)[0] for ch in title_str) // 2
     for i, ch in enumerate(title_str):
@@ -1158,12 +1185,13 @@ def draw_song_select(cursor: int, num_players: int) -> list:
         elif h < 4: rc,gc,bc =   0, x2,255
         elif h < 5: rc,gc,bc =  x2,  0,255
         else:       rc,gc,bc = 255,  0, x2
-        cs = F_TITLE.render(ch, True, (rc, gc, bc))
+        cs = _rainbow_char(ch, rc, gc, bc, F_TITLE)
         screen.blit(cs, (tx, 26)); tx += cs.get_width()
 
-    mode_lbl = F_MENUSM.render(
+    mode_key = '1p_mode' if num_players == 1 else '2p_mode'
+    mode_lbl = _tcache(mode_key,
         f"{'1 PLAYER' if num_players == 1 else '2 PLAYERS'}  —  choose a track",
-        True, (140, 100, 200))
+        F_MENUSM, (140, 100, 200))
     screen.blit(mode_lbl, (SW // 2 - mode_lbl.get_width() // 2, 72))
 
     mx, my = pygame.mouse.get_pos()
@@ -1187,28 +1215,27 @@ def draw_song_select(cursor: int, num_players: int) -> list:
             fill   = (22, 12, 44) if hover else (12, 8, 28)
             border = (120, 60, 180) if hover else (40, 28, 70)
 
-        # Glow on active
+        # Glow on active — pre-baked surface
         if active:
-            for gw in (8, 4):
-                gs = pygame.Surface((row_w + gw*2, row_h - 6 + gw*2), pygame.SRCALPHA)
-                pygame.draw.rect(gs, (*Q_PURPLE, int(25*(1-gw/10))),
-                                 (0,0,row_w+gw*2,row_h-6+gw*2), border_radius=12)
-                screen.blit(gs, (rx0 - gw, ry - gw))
+            glow = _get_row_glow(row_w, row_h - 6)
+            glow.set_alpha(int(180 * (0.7 + 0.3 * math.sin(t * 0.10))))
+            screen.blit(glow, (rx0 - 8, ry - 8))
 
         pygame.draw.rect(screen, fill,   rect, border_radius=10)
         pygame.draw.rect(screen, border, rect, 2 if active else 1, border_radius=10)
         rects.append(rect)
 
         nc = WHITE if active else (180, 100, 255)
-        num_s = F_MED.render(f"{i + 1}", True, nc)
+        num_s = _tcache(('snum', i, active), f"{i + 1}", F_MED, nc)
         screen.blit(num_s, (rx0 + 18, ry + (row_h - 6 - num_s.get_height()) // 2))
 
-        title_s  = F_MED.render(song["title"],  True, WHITE if active else (200, 180, 240))
-        artist_s = F_SM.render(song["artist"],  True, (120, 100, 180))
+        tc = WHITE if active else (200, 180, 240)
+        title_s  = _tcache(('stitle', i, active), song["title"],  F_MED, tc)
+        artist_s = _tcache(('sartist', i),         song["artist"], F_SM,  (120, 100, 180))
         screen.blit(title_s,  (rx0 + 50, ry + 8))
         screen.blit(artist_s, (rx0 + 50, ry + 8 + title_s.get_height()))
 
-        bpm_s = F_SM.render(f"{song['bpm']} BPM", True, (80, 180, 255))
+        bpm_s = _tcache(('sbpm', i), f"{song['bpm']} BPM", F_SM, (80, 180, 255))
         screen.blit(bpm_s, (rx0 + row_w - 210, ry + (row_h - 6 - bpm_s.get_height()) // 2))
 
         diff   = song["difficulty"]
@@ -1318,18 +1345,16 @@ def draw_results():
     screen.fill(BG)
 
     # Subtle star field behind results
-    rng = random.Random(99)
-    for _ in range(60):
-        sx = rng.randint(0, SW)
-        sy = rng.randint(0, SH)
-        pygame.draw.circle(screen, (40, 35, 65), (sx, sy), rng.randint(1, 2))
+    # Pre-baked starfield positions (no random.Random each frame)
+    for sx, sy in _STARS_RESULTS:
+        pygame.draw.circle(screen, (40, 35, 65), (sx, sy), 1)
 
-    title = F_TITLE.render("✦  GREAT GAME!  ✦", True, Q_PURPLE)
+    title = _tcache('res_title', "✦  GREAT GAME!  ✦", F_TITLE, Q_PURPLE)
     screen.blit(title, (SW // 2 - title.get_width() // 2, 22))
 
     if last_song:
-        song_lbl = F_MED.render(
-            f"{last_song['title']}  —  {last_song['artist']}", True, DIM)
+        song_lbl = _tcache('res_song',
+            f"{last_song['title']}  —  {last_song['artist']}", F_MED, DIM)
         screen.blit(song_lbl, (SW // 2 - song_lbl.get_width() // 2, 62))
 
     if n_players == 2 and p2:
@@ -1339,7 +1364,7 @@ def draw_results():
     else:
         _draw_results_panel(screen, p1, SW // 2, SH // 2 + 20, "")
 
-    hint = F_SM.render("R  play again     ESC  menu", True, (80, 70, 120))
+    hint = _tcache('res_hint', "R  play again     ESC  menu", F_SM, (80, 70, 120))
     screen.blit(hint, (SW // 2 - hint.get_width() // 2, SH - 40))
     pygame.display.flip()
 
@@ -1523,7 +1548,7 @@ def main():
     song_rects: list = []
 
     while True:
-        clk.tick(FPS)
+        clk.tick(30 if _LOW_PERF else FPS)
 
         # ── MENU ──────────────────────────────────────────────────────────────
         if game_state == GameState.MENU:
