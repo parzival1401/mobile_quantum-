@@ -59,6 +59,10 @@ import numpy as np
 from enum import Enum, auto
 
 pygame.init()
+# Force HDMI audio output (card 1 = vc4-hdmi-0 on Raspberry Pi)
+import os as _os
+_os.environ.setdefault("SDL_AUDIODEV", "hw:1,0")
+_os.environ.setdefault("AUDIODEV",     "hw:1,0")
 pygame.mixer.init(frequency=44100, size=-16, channels=2, buffer=512)
 
 
@@ -748,13 +752,11 @@ class PlayerState:
                 self.score += 300 * max(1, self.combo // 5)
                 self.perfect_count += 1
                 self.floats.append(FloatText("PERFECT!", scx, TARGET_Y - 42, GOLD, F_MED))
-                for _ in range(20): self.particles.append(Particle(scx, TARGET_Y, LANE_C[lane]))
                 _play(SFX_PERFECT)
             else:
                 self.score += 100 * max(1, self.combo // 10)
                 self.good_count += 1
                 self.floats.append(FloatText("GOOD", scx, TARGET_Y - 42, WHITE))
-                for _ in range(9): self.particles.append(Particle(scx, TARGET_Y, LANE_C[lane]))
                 _play(SFX_GOOD)
             for m in COMBO_MILESTONES:
                 if self.combo >= m and self.last_milestone < m:
@@ -776,8 +778,6 @@ class PlayerState:
             if note.just_collapsed:
                 cx = (_lcx(note.dropped_lane, self.ctx) if self.ctx
                       else lcx(note.dropped_lane))
-                ny = note.y + NOTE_H // 2
-                for _ in range(16): self.particles.append(Particle(cx, ny, Q_WAVE, 0.9))
                 self.floats.append(FloatText(
                     "COLLAPSED!", cx,
                     TARGET_Y - 42 + int(note.y - TARGET_Y) + NOTE_H // 2,
@@ -790,11 +790,9 @@ class PlayerState:
                 miss_cx = (_lcx(note.lane, self.ctx) if self.ctx else lcx(note.lane))
                 self.floats.append(FloatText("MISS", miss_cx, TARGET_Y - 42, RED))
 
-        self.notes[:]     = [n for n in self.notes     if n.alive]
-        self.max_combo    = max(self.max_combo, self.combo)
-        for p in self.particles: p.update()
-        self.particles[:] = [p for p in self.particles if p.life > 0]
-        for f in self.floats:    f.update()
+        self.notes[:]  = [n for n in self.notes  if n.alive]
+        self.max_combo = max(self.max_combo, self.combo)
+        for f in self.floats: f.update()
         self.floats[:]    = [f for f in self.floats    if f.life > 0]
         for i in range(N_LANES):
             if self.key_flash[i] > 0: self.key_flash[i] -= 1
@@ -1477,10 +1475,12 @@ def update(dt: float, music_pos_ms: int = -1):
     # Spawning
     if music_pos_ms >= 0:
         beat_time = max(0.0, music_pos_ms / 1000.0 - SONG_OFFSET)
-        beat_num  = beat_time * SONG_BPM / 60.0
-        cur_beat  = int(beat_num)
-        if cur_beat > last_beat and cur_beat % BEATS_PER_NOTE == 0:
-            spawn_note()
+        cur_beat  = int(beat_time * SONG_BPM / 60.0)
+        # Catch up on any beats missed during a slow frame
+        for b in range(last_beat + 1, cur_beat + 1):
+            if b % BEATS_PER_NOTE == 0:
+                spawn_note()
+        if cur_beat > last_beat:
             last_beat = cur_beat
     else:
         spawn_timer -= dt
@@ -1505,8 +1505,7 @@ def _render_player(surf, ps: PlayerState, ctx: RenderCtx, label: str = ""):
         else:
             draw_classical(surf, note, ctx)
 
-    for p in ps.particles: p.draw(surf)
-    for f in ps.floats:    f.draw(surf)
+    for f in ps.floats: f.draw(surf)
 
     draw_top(surf, ps, ctx, label)
     draw_bottom(surf, ctx)
