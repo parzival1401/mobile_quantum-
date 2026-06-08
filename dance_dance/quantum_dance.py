@@ -93,7 +93,7 @@ def _play(sfx):
 # ─────────────────────────────────────────────────────────────────────────────
 # Screen & timing
 # ─────────────────────────────────────────────────────────────────────────────
-SW, SH = 960, 720
+SW, SH = 1080, 1920
 FPS    = 60
 screen = pygame.display.set_mode((SW, SH))
 pygame.display.set_caption("Quantum Dance  |  Quantum Exhibition")
@@ -163,13 +163,13 @@ def _f(sz, bold=True):
             pass
     return pygame.font.Font(None, sz)
 
-F_TITLE  = _f(34)
-F_MENU   = _f(28)
-F_MENUSM = _f(18)
-F_MED    = _f(18)
-F_SM     = _f(14)
-F_XSM    = _f(11, bold=False)
-F_ARROW  = _f(26)
+F_TITLE  = _f(56)
+F_MENU   = _f(46)
+F_MENUSM = _f(30)
+F_MED    = _f(30)
+F_SM     = _f(22)
+F_XSM    = _f(17, bold=False)
+F_ARROW  = _f(44)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Song catalogue  (sourced from music/ddr_songs.txt)
@@ -212,23 +212,23 @@ COMBO_MILESTONES = [10, 25, 50, 100, 200]
 # Layout constants
 # ─────────────────────────────────────────────────────────────────────────────
 N_LANES  = 4
-LANE_W   = 200
+LANE_W   = 240
 LANE_GAP = 16
-TOTAL_W  = N_LANES * LANE_W + (N_LANES - 1) * LANE_GAP   # 848
-LX0      = (SW - TOTAL_W) // 2                            #  56 — small side margins
+TOTAL_W  = N_LANES * LANE_W + (N_LANES - 1) * LANE_GAP   # 1008
+LX0      = (SW - TOTAL_W) // 2                            #   36 — side margins
 
-TOP_H    = 82
-BOT_H    = 88
+TOP_H    = 140
+BOT_H    = 140
 LANE_TOP = TOP_H
-LANE_BOT = SH - BOT_H        # 632
+LANE_BOT = SH - BOT_H        # 1780
 
-TARGET_Y   = LANE_BOT - 28
-HIT_ZONE_H = 56
-NOTE_W     = LANE_W - 14
-NOTE_H     = 52
+TARGET_Y   = LANE_BOT - 50
+HIT_ZONE_H = 90
+NOTE_W     = LANE_W - 20
+NOTE_H     = 80
 
-HIT_PERFECT = 22
-HIT_GOOD    = 48
+HIT_PERFECT = 34
+HIT_GOOD    = 70
 
 KEYS_P1 = [pygame.K_LEFT, pygame.K_DOWN, pygame.K_UP, pygame.K_RIGHT]
 KEYS_P2 = [pygame.K_a,    pygame.K_s,    pygame.K_w,  pygame.K_d]
