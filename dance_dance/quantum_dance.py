@@ -299,35 +299,45 @@ ctx2: RenderCtx = None    # P2 render context
 
 def _find_second_monitor_x() -> int | None:
     """
-    Return the X offset where the second physical monitor starts, or None if
-    only one monitor is detected.
+    Return the X offset where the second physical monitor starts, or None.
 
-    Strategy:
-    1. Parse `xrandr` output (Linux/Pi) — works even when SDL2 sees only 1 display
-       because the whole desktop is one big virtual screen.
-    2. Fall back to pygame.display.get_desktop_sizes() (macOS / Windows).
+    Tries in order:
+    1. wlr-randr  (Wayland/labwc — Raspberry Pi Trixie)
+    2. xrandr     (X11 Linux)
+    3. pygame     (macOS / Windows fallback)
     """
-    # ── xrandr (Linux) ───────────────────────────────────────────────────────
+    import subprocess, re
+
+    # ── wlr-randr (Wayland) ──────────────────────────────────────────────────
     try:
-        import subprocess, re
+        out = subprocess.check_output(["wlr-randr"],
+                                      stderr=subprocess.DEVNULL).decode()
+        # Each monitor block starts with "HDMI-A-1" etc.
+        # Position line looks like:  Position: 1920,0
+        positions = []
+        for m in re.finditer(r'Position:\s*(\d+),\d+', out):
+            positions.append(int(m.group(1)))
+        positions = sorted(set(positions))
+        if len(positions) >= 2:
+            return positions[1]
+    except Exception:
+        pass
+
+    # ── xrandr (X11) ─────────────────────────────────────────────────────────
+    try:
         out = subprocess.check_output(["xrandr", "--query"],
                                       stderr=subprocess.DEVNULL).decode()
-        # Match lines like: HDMI-A-1 connected 1920x1080+1920+0
         pattern = re.compile(r'^\S+ connected \d+x\d+\+(\d+)\+\d+', re.MULTILINE)
         xs = sorted(int(m.group(1)) for m in pattern.finditer(out))
-        # xs is a list of X offsets for each connected monitor, e.g. [0, 1920, 3840]
         if len(xs) >= 2:
-            # P1 gets the monitor at x=0 (main screen), P2 gets the next one
             return xs[1]
     except Exception:
         pass
 
     # ── pygame fallback (macOS / Windows) ────────────────────────────────────
     try:
-        n = pygame.display.get_num_displays()
-        if n >= 2:
-            sizes = pygame.display.get_desktop_sizes()
-            return sizes[0][0]   # width of display 0 = x-start of display 1
+        if pygame.display.get_num_displays() >= 2:
+            return pygame.display.get_desktop_sizes()[0][0]
     except Exception:
         pass
 
