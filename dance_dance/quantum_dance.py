@@ -1253,8 +1253,6 @@ def draw_song_select(cursor: int, num_players: int) -> list:
                    F_XSM, (70, 55, 100))
     screen.blit(hint, (SW // 2 - hint.get_width() // 2, ry0 + len(SONGS) * row_h + 8))
 
-    screen.blit(_SCAN_FULL, (0, 0))
-
     pygame.display.flip()
     return rects
 
