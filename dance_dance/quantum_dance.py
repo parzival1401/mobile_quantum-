@@ -99,6 +99,16 @@ screen = pygame.display.set_mode((SW, SH))
 pygame.display.set_caption("Quantum Dance  |  Quantum Exhibition")
 clk    = pygame.time.Clock()
 
+# Pre-baked scanline overlays (created once, reused every frame)
+def _make_scanlines(w, h, alpha=28, step=4):
+    s = pygame.Surface((w, h), pygame.SRCALPHA)
+    for y in range(0, h, step):
+        pygame.draw.line(s, (0, 0, 0, alpha), (0, y), (w, y))
+    return s
+
+_SCAN_FULL   = _make_scanlines(SW, SH)           # menu / song select / results
+_SCAN_LANES  = None   # built after layout constants are defined
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Game state enum
 # ─────────────────────────────────────────────────────────────────────────────
@@ -164,6 +174,7 @@ def _f(sz, bold=True):
     return pygame.font.Font(None, sz)
 
 F_TITLE  = _f(56)
+F_BIG    = _f(72)
 F_MENU   = _f(46)
 F_MENUSM = _f(30)
 F_MED    = _f(30)
@@ -229,6 +240,9 @@ NOTE_H     = 80
 
 HIT_PERFECT = 34
 HIT_GOOD    = 70
+
+# Build lane scanline overlay now that LANE_TOP/LANE_BOT are defined
+_SCAN_LANES = _make_scanlines(SW, LANE_BOT - LANE_TOP)
 
 KEYS_P1 = [pygame.K_LEFT, pygame.K_DOWN, pygame.K_UP, pygame.K_RIGHT]
 KEYS_P2 = [pygame.K_a,    pygame.K_s,    pygame.K_w,  pygame.K_d]
@@ -767,18 +781,11 @@ def draw_lanes(surf, key_flash, ctx: RenderCtx):
         pygame.draw.line(surf, (r//3, g//3, b//3), (x + ctx.lane_w - 1, LANE_TOP),
                          (x + ctx.lane_w - 1, LANE_BOT), 2)
         if key_flash[i] > 0:
-            s = pygame.Surface((ctx.lane_w, LANE_BOT - LANE_TOP), pygame.SRCALPHA)
-            s.fill((r, g, b, int(110 * key_flash[i] / 14)))
-            surf.blit(s, (x, LANE_TOP))
+            pygame.draw.rect(surf, (r//3, g//3, b//3),
+                             (x, LANE_TOP, ctx.lane_w, LANE_BOT - LANE_TOP))
 
-    # CRT scanlines over lanes only
-    for y in range(LANE_TOP, LANE_BOT, 4):
-        pygame.draw.line(surf, (0, 0, 0, 28) if True else 0,
-                         (0, y), (ctx.sw, y))
-    scan = pygame.Surface((ctx.sw, LANE_BOT - LANE_TOP), pygame.SRCALPHA)
-    for y in range(0, LANE_BOT - LANE_TOP, 4):
-        pygame.draw.line(scan, (0, 0, 0, 30), (0, y), (ctx.sw, y))
-    surf.blit(scan, (0, LANE_TOP))
+    # CRT scanlines — pre-baked, just blit
+    surf.blit(_SCAN_LANES, (0, LANE_TOP))
 
     # Collapse zone — pulsing neon line
     cy  = get_collapse_y()
@@ -800,15 +807,8 @@ def draw_hit_zone(surf, ctx: RenderCtx):
         pr, pg, pb = int(r*pulse), int(g*pulse), int(b*pulse)
         hz = pygame.Rect(x + 4, TARGET_Y - HIT_ZONE_H // 2,
                          ctx.lane_w - 8, HIT_ZONE_H)
-        # Glow behind receptor
-        for gw in (12, 6):
-            gs = pygame.Surface((hz.width + gw*2, hz.height + gw*2), pygame.SRCALPHA)
-            alpha = int(30 * (1 - gw/14) * pulse)
-            pygame.draw.rect(gs, (pr, pg, pb, alpha),
-                             (0, 0, hz.width + gw*2, hz.height + gw*2), border_radius=12)
-            surf.blit(gs, (hz.x - gw, hz.y - gw))
         pygame.draw.rect(surf, (r//6, g//6, b//6), hz, border_radius=10)
-        pygame.draw.rect(surf, (pr, pg, pb),       hz, 2, border_radius=10)
+        pygame.draw.rect(surf, (pr, pg, pb), hz, 3, border_radius=10)
         pygame.draw.line(surf, (pr, pg, pb),
                          (x + 6, TARGET_Y), (x + ctx.lane_w - 6, TARGET_Y), 3)
         lbl = F_ARROW.render(ARROWS[i], True, (pr, pg, pb))
@@ -822,13 +822,6 @@ def draw_classical(surf, note: Note, ctx: RenderCtx):
     nw      = ctx.note_w
     ny      = int(note.y)
     rect    = pygame.Rect(scx - nw // 2, ny, nw, NOTE_H)
-    # Neon glow
-    for gw in (10, 5):
-        gs = pygame.Surface((nw + gw*2, NOTE_H + gw*2), pygame.SRCALPHA)
-        alpha = int(35 * (1 - gw/12))
-        pygame.draw.rect(gs, (r, g, b, alpha),
-                         (0, 0, nw + gw*2, NOTE_H + gw*2), border_radius=11)
-        surf.blit(gs, (rect.x - gw, ny - gw))
     pygame.draw.rect(surf, (r//4, g//4, b//4), rect, border_radius=9)
     pygame.draw.rect(surf, (r, g, b),           rect, 3, border_radius=9)
     ar = F_ARROW.render(ARROWS[note.lane], True, (r, g, b))
@@ -981,11 +974,8 @@ def draw_menu():
         br = int(80 * twinkle)
         pygame.draw.circle(screen, (br, br, br + 20), (sx, sy), rng.randint(1, 2))
 
-    # ── Horizontal scan lines (retro CRT feel) ────────────────────────────────
-    scan = pygame.Surface((SW, SH), pygame.SRCALPHA)
-    for y in range(0, SH, 4):
-        pygame.draw.line(scan, (0, 0, 0, 35), (0, y), (SW, y))
-    screen.blit(scan, (0, 0))
+    # CRT scanlines — pre-baked
+    screen.blit(_SCAN_FULL, (0, 0))
 
     # ── Marquee border ────────────────────────────────────────────────────────
     cols = [(255,60,180),(255,160,0),(80,255,80),(0,200,255),(200,80,255)]
@@ -1003,7 +993,6 @@ def draw_menu():
     title_str = "QUANTUM  DANCE"
     char_surfs = []
     total_w = 0
-    F_BIG = _f(56)
     for i, ch in enumerate(title_str):
         hue = (t * 2 + i * 18) % 360
         # HSV → RGB
@@ -1192,11 +1181,8 @@ def draw_song_select(cursor: int, num_players: int) -> list:
                          True, (70, 55, 100))
     screen.blit(hint, (SW // 2 - hint.get_width() // 2, ry0 + len(SONGS) * row_h + 8))
 
-    # CRT scanlines
-    scan = pygame.Surface((SW, SH), pygame.SRCALPHA)
-    for y in range(0, SH, 4):
-        pygame.draw.line(scan, (0, 0, 0, 28), (0, y), (SW, y))
-    screen.blit(scan, (0, 0))
+    # CRT scanlines — pre-baked
+    screen.blit(_SCAN_FULL, (0, 0))
 
     pygame.display.flip()
     return rects
@@ -1465,10 +1451,11 @@ def _render_player(surf, ps: PlayerState, ctx: RenderCtx, label: str = ""):
         bsurf.set_alpha(alpha)
         surf.blit(bsurf, (sw // 2 - bsurf.get_width() // 2, SH // 2 - 30))
 
-    # Screen flash on milestone
+    # Screen flash on milestone — draw a filled rect with set_alpha instead
     if ps.flash_timer > 0:
-        fsurf = pygame.Surface((sw, SH), pygame.SRCALPHA)
-        fsurf.fill((255, 255, 255, int(60 * ps.flash_timer / 8)))
+        fsurf = pygame.Surface((sw, SH))
+        fsurf.fill((255, 255, 255))
+        fsurf.set_alpha(int(60 * ps.flash_timer / 8))
         surf.blit(fsurf, (0, 0))
 
 
