@@ -1065,7 +1065,7 @@ def draw_song_select(cursor: int, num_players: int) -> list:
         sx = rng.randint(0, SW); sy = rng.randint(0, SH)
         twinkle = 0.4 + 0.6 * math.sin(t * 0.04 + rng.random() * math.tau)
         br = int(50 * twinkle)
-        pygame.draw.circle(screen, (br, br, br + 15), (sx, sy), 1)
+        pygame.draw.circle(screen, (br, br, min(255, br + 15)), (sx, sy), 1)
 
     # Marquee border
     cols = [(255,60,180),(255,160,0),(80,255,80),(0,200,255),(200,80,255)]
