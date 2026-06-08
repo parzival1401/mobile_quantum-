@@ -555,20 +555,16 @@ class PlayerState:
         self.combo     = 0
         self.max_combo = 0
         self.key_flash = [0] * N_LANES
-        # Arcade stats
-        self.hp             = MAX_HP
-        self.dead           = False
         self.perfect_count  = 0
         self.good_count     = 0
         self.miss_count     = 0
         self.total_notes    = 0
         self.last_milestone = 0
-        self.milestone_timer = 0   # frames remaining to show banner
+        self.milestone_timer = 0
         self.milestone_text  = ""
-        self.flash_timer     = 0   # frames for screen-wide white flash
+        self.flash_timer     = 0
 
     def handle_key(self, key_idx: int):
-        if self.dead: return
         lane = key_idx
         self.key_flash[lane] = 14
         scx = _lcx(lane, self.ctx) if self.ctx else lcx(lane)
@@ -587,11 +583,9 @@ class PlayerState:
         if best is None or best_d > HIT_GOOD:
             self.combo = 0
             self.last_milestone = 0
-            self.hp = max(0, self.hp - HP_LOSS_MISS)
             self.miss_count += 1
             self.floats.append(FloatText("MISS", scx, TARGET_Y - 42, RED))
             _play(SFX_MISS)
-            if self.hp == 0: self.dead = True
             return
 
         quality = best.in_hit_zone()
@@ -600,19 +594,16 @@ class PlayerState:
             self.combo += 1
             if quality == "PERFECT":
                 self.score += 300 * max(1, self.combo // 5)
-                self.hp = min(MAX_HP, self.hp + HP_GAIN_PERFECT)
                 self.perfect_count += 1
                 self.floats.append(FloatText("PERFECT!", scx, TARGET_Y - 42, GOLD, F_MED))
                 for _ in range(20): self.particles.append(Particle(scx, TARGET_Y, LANE_C[lane]))
                 _play(SFX_PERFECT)
             else:
                 self.score += 100 * max(1, self.combo // 10)
-                self.hp = min(MAX_HP, self.hp + HP_GAIN_GOOD)
                 self.good_count += 1
                 self.floats.append(FloatText("GOOD", scx, TARGET_Y - 42, WHITE))
                 for _ in range(9): self.particles.append(Particle(scx, TARGET_Y, LANE_C[lane]))
                 _play(SFX_GOOD)
-            # Milestone check
             for m in COMBO_MILESTONES:
                 if self.combo >= m and self.last_milestone < m:
                     self.last_milestone  = m
@@ -623,11 +614,9 @@ class PlayerState:
         else:
             self.combo = 0
             self.last_milestone = 0
-            self.hp = max(0, self.hp - HP_LOSS_MISS)
             self.miss_count += 1
             self.floats.append(FloatText("EARLY", scx, TARGET_Y - 42, (255, 180, 0)))
             _play(SFX_MISS)
-            if self.hp == 0: self.dead = True
 
     def update(self, collapsed_outcomes: dict):
         for note in self.notes:
@@ -645,11 +634,9 @@ class PlayerState:
             if note.just_missed:
                 self.combo = 0
                 self.last_milestone = 0
-                self.hp = max(0, self.hp - HP_LOSS_QUANTUM)
                 self.miss_count += 1
                 miss_cx = (_lcx(note.lane, self.ctx) if self.ctx else lcx(note.lane))
                 self.floats.append(FloatText("MISS", miss_cx, TARGET_Y - 42, RED))
-                if self.hp == 0: self.dead = True
 
         self.notes[:]     = [n for n in self.notes     if n.alive]
         self.max_combo    = max(self.max_combo, self.combo)
@@ -840,22 +827,6 @@ def draw_top(surf, ps: PlayerState, ctx: RenderCtx, label: str = ""):
     qc = F_SM.render(f"collapses: {q_collapsed}/{q_total}", True, (170, 70, 230))
     surf.blit(qc, (18, 34))
 
-    # Health bar
-    bar_x, bar_y, bar_w, bar_h = 18, 52, 200, 8
-    frac = ps.hp / MAX_HP
-    if frac > 0.6:
-        hcol = (40, 200, 80)
-    elif frac > 0.3:
-        hcol = (220, 180, 0)
-    else:
-        hcol = (220, 40, 40)
-    pygame.draw.rect(surf, (30, 25, 50), (bar_x, bar_y, bar_w, bar_h), border_radius=4)
-    if frac > 0:
-        pygame.draw.rect(surf, hcol, (bar_x, bar_y, int(bar_w * frac), bar_h), border_radius=4)
-    pygame.draw.rect(surf, (80, 70, 120), (bar_x, bar_y, bar_w, bar_h), 1, border_radius=4)
-    hp_lbl = F_XSM.render(f"HP  {ps.hp}/{MAX_HP}", True, hcol)
-    surf.blit(hp_lbl, (bar_x + bar_w + 6, bar_y - 1))
-
     sub = F_XSM.render(
         "Classical notes: ONE lane.   "
         "Quantum notes: TWO lanes — collapse to one before the hit zone.",
@@ -891,52 +862,129 @@ def draw_bottom(surf, ctx: RenderCtx):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Menu
+# Arcade retro menu
 # ─────────────────────────────────────────────────────────────────────────────
+_menu_tick = 0   # animated frame counter
+
 def draw_menu():
-    screen.fill(BG)
+    global _menu_tick
+    _menu_tick += 1
+    t = _menu_tick
 
-    # Title
-    title = F_TITLE.render("✦  QUANTUM DANCE  ✦", True, Q_PURPLE)
-    screen.blit(title, (SW // 2 - title.get_width() // 2, SH // 2 - 160))
+    screen.fill((4, 2, 14))
 
-    sub = F_MENUSM.render("Quantum Exhibition  |  Classical vs Quantum Computing",
-                          True, DIM)
-    screen.blit(sub, (SW // 2 - sub.get_width() // 2, SH // 2 - 115))
+    # ── Starfield ────────────────────────────────────────────────────────────
+    rng = random.Random(7)
+    for _ in range(120):
+        sx = rng.randint(0, SW)
+        sy = rng.randint(0, SH)
+        twinkle = 0.5 + 0.5 * math.sin(t * 0.05 + rng.random() * math.tau)
+        br = int(80 * twinkle)
+        pygame.draw.circle(screen, (br, br, br + 20), (sx, sy), rng.randint(1, 2))
 
-    # Buttons
-    btn_w, btn_h = 280, 60
-    gap          = 30
-    bx           = SW // 2 - btn_w // 2
-    by1          = SH // 2 - 20
-    by2          = by1 + btn_h + gap
+    # ── Horizontal scan lines (retro CRT feel) ────────────────────────────────
+    scan = pygame.Surface((SW, SH), pygame.SRCALPHA)
+    for y in range(0, SH, 4):
+        pygame.draw.line(scan, (0, 0, 0, 35), (0, y), (SW, y))
+    screen.blit(scan, (0, 0))
 
+    # ── Marquee border ────────────────────────────────────────────────────────
+    cols = [(255,60,180),(255,160,0),(80,255,80),(0,200,255),(200,80,255)]
+    for i, col in enumerate(cols):
+        alpha = int(180 + 75 * math.sin(t * 0.07 + i * 1.2))
+        c = tuple(min(255, int(v * alpha / 255)) for v in col)
+        pygame.draw.rect(screen, c, (i*3, i*3, SW - i*6, SH - i*6), 2)
+
+    # ── Blinking "INSERT COIN" at top ─────────────────────────────────────────
+    if (t // 22) % 2 == 0:
+        coin = F_MENUSM.render("► INSERT COIN ◄", True, (255, 230, 0))
+        screen.blit(coin, (SW // 2 - coin.get_width() // 2, 28))
+
+    # ── Rainbow cycling title ─────────────────────────────────────────────────
+    title_str = "QUANTUM  DANCE"
+    char_surfs = []
+    total_w = 0
+    F_BIG = _f(56)
+    for i, ch in enumerate(title_str):
+        hue = (t * 2 + i * 18) % 360
+        # HSV → RGB
+        h = hue / 60.0
+        x = int(255 * (1 - abs(h % 2 - 1)))
+        if   h < 1: r,g,b = 255,  x,  0
+        elif h < 2: r,g,b =   x,255,  0
+        elif h < 3: r,g,b =   0,255,  x
+        elif h < 4: r,g,b =   0,  x,255
+        elif h < 5: r,g,b =   x,  0,255
+        else:       r,g,b = 255,  0,  x
+        cs = F_BIG.render(ch, True, (r, g, b))
+        char_surfs.append(cs)
+        total_w += cs.get_width()
+
+    tx = SW // 2 - total_w // 2
+    ty = SH // 2 - 200 + int(6 * math.sin(t * 0.06))
+    for cs in char_surfs:
+        screen.blit(cs, (tx, ty))
+        tx += cs.get_width()
+
+    # ── Subtitle ─────────────────────────────────────────────────────────────
+    sub_col = (int(160 + 60 * math.sin(t * 0.04)),
+               int(100 + 60 * math.sin(t * 0.04 + 1)),
+               int(200 + 55 * math.sin(t * 0.04 + 2)))
+    sub = F_MENUSM.render("CLASSICAL  vs  QUANTUM  COMPUTING", True, sub_col)
+    screen.blit(sub, (SW // 2 - sub.get_width() // 2, SH // 2 - 130))
+
+    # ── Buttons ───────────────────────────────────────────────────────────────
+    btn_w, btn_h = 300, 64
+    gap  = 22
+    bx   = SW // 2 - btn_w // 2
+    by1  = SH // 2 - 30
+    by2  = by1 + btn_h + gap
     mx, my = pygame.mouse.get_pos()
 
-    for by, label, key_hint in [
-        (by1, "1 PLAYER",  "press  1"),
-        (by2, "2 PLAYERS", "press  2"),
+    for by, label, key_hint, base_col in [
+        (by1, "1  PLAYER",  "PRESS  1", (0, 180, 255)),
+        (by2, "2  PLAYERS", "PRESS  2", (255, 80, 200)),
     ]:
-        rect = pygame.Rect(bx, by, btn_w, btn_h)
+        rect  = pygame.Rect(bx, by, btn_w, btn_h)
         hover = rect.collidepoint(mx, my)
-        fill  = (40, 20, 80) if hover else (20, 10, 45)
-        border= Q_PURPLE     if hover else (100, 40, 160)
-        pygame.draw.rect(screen, fill,   rect, border_radius=12)
-        pygame.draw.rect(screen, border, rect, 2, border_radius=12)
-        lbl = F_MENU.render(label, True, WHITE if hover else DIM)
+        pulse = 0.7 + 0.3 * math.sin(t * 0.10)
+        r, g, b = base_col
+        bcol  = (int(r * pulse), int(g * pulse), int(b * pulse))
+
+        # Glow
+        for gw in (18, 10, 4):
+            gs = pygame.Surface((btn_w + gw*2, btn_h + gw*2), pygame.SRCALPHA)
+            alpha = int(40 * (1 - gw / 20)) if hover else int(18 * (1 - gw / 20))
+            pygame.draw.rect(gs, (*bcol, alpha),
+                             (0, 0, btn_w + gw*2, btn_h + gw*2), border_radius=10)
+            screen.blit(gs, (bx - gw, by - gw))
+
+        fill = (int(r*0.18), int(g*0.18), int(b*0.18))
+        pygame.draw.rect(screen, fill,   rect, border_radius=8)
+        pygame.draw.rect(screen, bcol,   rect, 2, border_radius=8)
+
+        lbl = F_MENU.render(label, True, WHITE if hover else bcol)
         screen.blit(lbl, (rect.centerx - lbl.get_width() // 2,
                           rect.centery - lbl.get_height() // 2))
-        hint = F_XSM.render(key_hint, True, (80, 70, 110))
-        screen.blit(hint, (rect.right + 10, rect.centery - hint.get_height() // 2))
+        hint = F_XSM.render(key_hint, True, (120, 110, 160))
+        screen.blit(hint, (rect.right + 12, rect.centery - hint.get_height() // 2))
 
-    # Controls reminder
-    ctrl = F_XSM.render("P1: ← ↓ ↑ →     P2 (2-player): A S W D     ESC: quit",
+    # ── Arrow decoration ──────────────────────────────────────────────────────
+    arrow_y = SH // 2 + 110
+    for i, (arrow, col) in enumerate(zip(
+        ["←", "↓", "↑", "→"], LANE_C
+    )):
+        bounce = int(5 * math.sin(t * 0.12 + i * 0.8))
+        as_ = F_TITLE.render(arrow, True, col)
+        ax  = SW // 2 - 90 + i * 60
+        screen.blit(as_, (ax - as_.get_width() // 2, arrow_y + bounce))
+
+    # ── Bottom hint ───────────────────────────────────────────────────────────
+    ctrl = F_XSM.render("P1: ← ↓ ↑ →     2P adds: A S W D",
                          True, (70, 60, 100))
-    screen.blit(ctrl, (SW // 2 - ctrl.get_width() // 2, SH // 2 + 180))
+    screen.blit(ctrl, (SW // 2 - ctrl.get_width() // 2, SH - 28))
 
     pygame.display.flip()
-
-    # Return (1, by1_rect) or (2, by2_rect) for click detection
     return (pygame.Rect(bx, by1, btn_w, btn_h),
             pygame.Rect(bx, by2, btn_w, btn_h))
 
@@ -1010,62 +1058,114 @@ def draw_song_select(cursor: int, num_players: int) -> list:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Grade + results helpers
+# Results helpers — kid-friendly star rating
 # ─────────────────────────────────────────────────────────────────────────────
-def _grade(accuracy: float) -> str:
-    if accuracy >= 0.95: return "S"
-    if accuracy >= 0.80: return "A"
-    if accuracy >= 0.60: return "B"
-    if accuracy >= 0.40: return "C"
-    return "F"
+def _stars(accuracy: float) -> int:
+    if accuracy >= 0.90: return 5
+    if accuracy >= 0.70: return 4
+    if accuracy >= 0.50: return 3
+    if accuracy >= 0.30: return 2
+    return 1
 
+def _star_message(n: int) -> tuple:
+    return [
+        ("Keep trying!",   (200, 180, 100)),
+        ("Nice try!",      (200, 180, 100)),
+        ("Good job!",      (100, 220, 255)),
+        ("Great!",         (100, 255, 150)),
+        ("AMAZING!",       GOLD),
+        ("PERFECT!!",      GOLD),
+    ][n]
+
+def _draw_star(surf, cx, cy, r, filled, col):
+    pts = []
+    for i in range(10):
+        angle = math.pi / 2 + i * math.tau / 10
+        radius = r if i % 2 == 0 else r * 0.42
+        pts.append((cx + math.cos(angle) * radius,
+                    cy - math.sin(angle) * radius))
+    if filled:
+        pygame.draw.polygon(surf, col, pts)
+        pygame.draw.polygon(surf, (255, 255, 200), pts, 1)
+    else:
+        pygame.draw.polygon(surf, (60, 50, 90), pts)
+        pygame.draw.polygon(surf, (80, 70, 110), pts, 1)
 
 def _draw_results_panel(surf, ps: PlayerState, cx: int, cy: int, title: str):
-    total  = max(1, ps.total_notes)
-    hits   = ps.perfect_count + ps.good_count
-    acc    = hits / total
-    grade  = _grade(acc)
-    gcol   = {"S": (255,215,0), "A": (100,255,120), "B": (80,180,255),
-               "C": (255,180,60), "F": (255,60,60)}[grade]
+    total = max(1, ps.total_notes)
+    hits  = ps.perfect_count + ps.good_count
+    acc   = hits / total
+    n_st  = _stars(acc)
+    msg, mcol = _star_message(n_st)
 
-    rows = [
-        (f"SCORE",    f"{ps.score:07d}",          GOLD),
-        (f"GRADE",    grade,                       gcol),
-        (f"ACCURACY", f"{acc * 100:.1f}%",         WHITE),
-        (f"MAX COMBO",f"×{ps.max_combo}",          WHITE),
-        (f"PERFECT",  f"{ps.perfect_count}",       (100, 255, 120)),
-        (f"GOOD",     f"{ps.good_count}",          (80, 200, 255)),
-        (f"MISS",     f"{ps.miss_count}",          RED),
-    ]
-    lbl = F_MED.render(title, True, Q_PURPLE)
-    surf.blit(lbl, (cx - lbl.get_width() // 2, cy - 130))
-    for i, (key, val, col) in enumerate(rows):
-        ky = cy - 90 + i * 30
-        k_surf = F_SM.render(key, True, DIM)
-        v_surf = F_SM.render(val, True, col)
-        surf.blit(k_surf, (cx - 110, ky))
-        surf.blit(v_surf, (cx + 110 - v_surf.get_width(), ky))
+    if title:
+        lbl = F_MED.render(title, True, Q_PURPLE)
+        surf.blit(lbl, (cx - lbl.get_width() // 2, cy - 190))
+
+    # Stars
+    star_r = 28
+    star_gap = 70
+    star_y = cy - 130
+    for i in range(5):
+        sx = cx + (i - 2) * star_gap
+        filled = i < n_st
+        col = GOLD if filled else (50, 40, 70)
+        _draw_star(surf, sx, star_y, star_r, filled, col)
+
+    # Message
+    msg_surf = F_TITLE.render(msg, True, mcol)
+    surf.blit(msg_surf, (cx - msg_surf.get_width() // 2, cy - 78))
+
+    # Score (big)
+    sc_surf = F_TITLE.render(f"{ps.score:,}", True, GOLD)
+    surf.blit(sc_surf, (cx - sc_surf.get_width() // 2, cy - 30))
+    sc_lbl = F_SM.render("SCORE", True, DIM)
+    surf.blit(sc_lbl, (cx - sc_lbl.get_width() // 2, cy + 14))
+
+    # Stats row
+    for i, (icon, val, col) in enumerate([
+        ("★ PERFECT", str(ps.perfect_count), (100, 255, 150)),
+        ("◆ GOOD",    str(ps.good_count),    (80, 200, 255)),
+        ("✕ MISS",    str(ps.miss_count),    (180, 80, 80)),
+        ("⚡ COMBO",  f"×{ps.max_combo}",    GOLD),
+    ]):
+        bx = cx - 140 + i * 72
+        by = cy + 46
+        pygame.draw.rect(surf, (20, 15, 40), (bx, by, 64, 42), border_radius=6)
+        pygame.draw.rect(surf, (50, 40, 80), (bx, by, 64, 42), 1, border_radius=6)
+        v = F_MED.render(val, True, col)
+        k = F_XSM.render(icon, True, DIM)
+        surf.blit(v, (bx + 32 - v.get_width() // 2, by + 4))
+        surf.blit(k, (bx + 32 - k.get_width() // 2, by + 26))
 
 
 def draw_results():
     screen.fill(BG)
-    title = F_TITLE.render("✦  RESULTS  ✦", True, Q_PURPLE)
-    screen.blit(title, (SW // 2 - title.get_width() // 2, 30))
+
+    # Subtle star field behind results
+    rng = random.Random(99)
+    for _ in range(60):
+        sx = rng.randint(0, SW)
+        sy = rng.randint(0, SH)
+        pygame.draw.circle(screen, (40, 35, 65), (sx, sy), rng.randint(1, 2))
+
+    title = F_TITLE.render("✦  GREAT GAME!  ✦", True, Q_PURPLE)
+    screen.blit(title, (SW // 2 - title.get_width() // 2, 22))
 
     if last_song:
         song_lbl = F_MED.render(
             f"{last_song['title']}  —  {last_song['artist']}", True, DIM)
-        screen.blit(song_lbl, (SW // 2 - song_lbl.get_width() // 2, 72))
+        screen.blit(song_lbl, (SW // 2 - song_lbl.get_width() // 2, 62))
 
     if n_players == 2 and p2:
-        _draw_results_panel(screen, p1, SW // 4,     SH // 2, "PLAYER 1")
-        _draw_results_panel(screen, p2, SW * 3 // 4, SH // 2, "PLAYER 2")
-        pygame.draw.line(screen, (60, 50, 100), (SW // 2, 100), (SW // 2, SH - 60), 1)
+        _draw_results_panel(screen, p1, SW // 4,     SH // 2 + 20, "PLAYER 1")
+        _draw_results_panel(screen, p2, SW * 3 // 4, SH // 2 + 20, "PLAYER 2")
+        pygame.draw.line(screen, (50, 40, 80), (SW // 2, 95), (SW // 2, SH - 55), 1)
     else:
-        _draw_results_panel(screen, p1, SW // 2, SH // 2, "")
+        _draw_results_panel(screen, p1, SW // 2, SH // 2 + 20, "")
 
-    hint = F_SM.render("R  retry     ESC  menu", True, (80, 70, 120))
-    screen.blit(hint, (SW // 2 - hint.get_width() // 2, SH - 48))
+    hint = F_SM.render("R  play again     ESC  menu", True, (80, 70, 120))
+    screen.blit(hint, (SW // 2 - hint.get_width() // 2, SH - 40))
     pygame.display.flip()
 
 
@@ -1232,13 +1332,6 @@ def _render_player(surf, ps: PlayerState, ctx: RenderCtx, label: str = ""):
         fsurf.fill((255, 255, 255, int(60 * ps.flash_timer / 8)))
         surf.blit(fsurf, (0, 0))
 
-    # Dead overlay
-    if ps.dead:
-        dsurf = pygame.Surface((sw, SH), pygame.SRCALPHA)
-        dsurf.fill((80, 0, 0, 120))
-        surf.blit(dsurf, (0, 0))
-        dtxt = F_TITLE.render("FAILED", True, (255, 60, 60))
-        surf.blit(dtxt, (sw // 2 - dtxt.get_width() // 2, SH // 2 - 20))
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1254,8 +1347,6 @@ _seen_collapsed_nids: set = set()
 def main():
     global game_state, q_collapsed, _seen_collapsed_nids
     global n_players, song_cursor, last_song
-    _results_timer = 0   # frames to wait after death before showing results
-
     btn1_rect = btn2_rect = None
     song_rects: list = []
 
@@ -1380,16 +1471,8 @@ def main():
 
         # ── Transition to RESULTS ─────────────────────────────────────────────
         song_done = SONG_FILE and not pygame.mixer.music.get_busy()
-        any_dead  = p1.dead or (p2 is not None and p2.dead)
-        if any_dead:
-            _results_timer += 1
-            if _results_timer >= 90:   # ~1.5s delay so "FAILED" is visible
-                _results_timer = 0
-                game_state = GameState.RESULTS
-                try: pygame.mixer.music.stop()
-                except Exception: pass
-        elif song_done and not p1.notes and (p2 is None or not p2.notes):
-            try: pygame.mixer.music.set_volume(1.0)  # reset for next song
+        if song_done and not p1.notes and (p2 is None or not p2.notes):
+            try: pygame.mixer.music.set_volume(1.0)
             except Exception: pass
             game_state = GameState.RESULTS
 
