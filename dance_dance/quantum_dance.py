@@ -711,51 +711,92 @@ def draw_panels(surf):
 
 
 def draw_lanes(surf, key_flash, ctx: RenderCtx):
+    # Starfield background
+    rng = random.Random(13)
+    for _ in range(60):
+        sx = rng.randint(0, ctx.sw)
+        sy = rng.randint(LANE_TOP, LANE_BOT)
+        twinkle = 0.4 + 0.6 * math.sin(tick * 0.04 + rng.random() * math.tau)
+        br = int(55 * twinkle)
+        pygame.draw.circle(surf, (br, br, br + 15), (sx, sy), 1)
+
     for i in range(N_LANES):
         x    = _lx(i, ctx)
         rect = pygame.Rect(x, LANE_TOP, ctx.lane_w, LANE_BOT - LANE_TOP)
-        pygame.draw.rect(surf, LANE_BG, rect)
-        pygame.draw.rect(surf, LANE_LINE, rect, 1)
+        pygame.draw.rect(surf, (6, 4, 18), rect)
+        r, g, b = LANE_C[i]
+        # Neon side borders
+        pygame.draw.line(surf, (r//3, g//3, b//3), (x, LANE_TOP), (x, LANE_BOT), 2)
+        pygame.draw.line(surf, (r//3, g//3, b//3), (x + ctx.lane_w - 1, LANE_TOP),
+                         (x + ctx.lane_w - 1, LANE_BOT), 2)
         if key_flash[i] > 0:
-            r, g, b = LANE_C[i]
             s = pygame.Surface((ctx.lane_w, LANE_BOT - LANE_TOP), pygame.SRCALPHA)
-            s.fill((r, g, b, int(90 * key_flash[i] / 14)))
+            s.fill((r, g, b, int(110 * key_flash[i] / 14)))
             surf.blit(s, (x, LANE_TOP))
 
-    cy = get_collapse_y()
+    # CRT scanlines over lanes only
+    for y in range(LANE_TOP, LANE_BOT, 4):
+        pygame.draw.line(surf, (0, 0, 0, 28) if True else 0,
+                         (0, y), (ctx.sw, y))
+    scan = pygame.Surface((ctx.sw, LANE_BOT - LANE_TOP), pygame.SRCALPHA)
+    for y in range(0, LANE_BOT - LANE_TOP, 4):
+        pygame.draw.line(scan, (0, 0, 0, 30), (0, y), (ctx.sw, y))
+    surf.blit(scan, (0, LANE_TOP))
+
+    # Collapse zone — pulsing neon line
+    cy  = get_collapse_y()
+    col_pulse = int(120 + 80 * math.sin(tick * 0.08))
     for i in range(N_LANES):
         x = _lx(i, ctx)
-        pygame.draw.line(surf, (80, 35, 105), (x + 4, cy), (x + ctx.lane_w - 4, cy), 1)
-    cl = F_XSM.render("collapse zone", True, (100, 45, 130))
-    surf.blit(cl, (_lcx(0, ctx) - cl.get_width() // 2, cy - 14))
+        pygame.draw.line(surf, (col_pulse, 20, col_pulse),
+                         (x + 4, cy), (x + ctx.lane_w - 4, cy), 2)
+    cl = F_XSM.render("◆ COLLAPSE ZONE ◆", True, (col_pulse, 40, col_pulse))
+    surf.blit(cl, (_lcx(0, ctx) - cl.get_width() // 2, cy - 15))
 
 
 def draw_hit_zone(surf, ctx: RenderCtx):
+    pulse = 0.7 + 0.3 * math.sin(tick * 0.10)
     for i in range(N_LANES):
         x       = _lx(i, ctx)
         scx     = _lcx(i, ctx)
         r, g, b = LANE_C[i]
-        hz      = pygame.Rect(x + 4, TARGET_Y - HIT_ZONE_H // 2,
-                              ctx.lane_w - 8, HIT_ZONE_H)
-        pygame.draw.rect(surf, (r // 5, g // 5, b // 5), hz, border_radius=10)
-        pygame.draw.rect(surf, (r // 2, g // 2, b // 2), hz, 2, border_radius=10)
-        pygame.draw.line(surf, (r, g, b),
-                         (x + 6, TARGET_Y), (x + ctx.lane_w - 6, TARGET_Y), 2)
-        lbl = F_ARROW.render(ARROWS[i], True, (r, g, b))
+        pr, pg, pb = int(r*pulse), int(g*pulse), int(b*pulse)
+        hz = pygame.Rect(x + 4, TARGET_Y - HIT_ZONE_H // 2,
+                         ctx.lane_w - 8, HIT_ZONE_H)
+        # Glow behind receptor
+        for gw in (12, 6):
+            gs = pygame.Surface((hz.width + gw*2, hz.height + gw*2), pygame.SRCALPHA)
+            alpha = int(30 * (1 - gw/14) * pulse)
+            pygame.draw.rect(gs, (pr, pg, pb, alpha),
+                             (0, 0, hz.width + gw*2, hz.height + gw*2), border_radius=12)
+            surf.blit(gs, (hz.x - gw, hz.y - gw))
+        pygame.draw.rect(surf, (r//6, g//6, b//6), hz, border_radius=10)
+        pygame.draw.rect(surf, (pr, pg, pb),       hz, 2, border_radius=10)
+        pygame.draw.line(surf, (pr, pg, pb),
+                         (x + 6, TARGET_Y), (x + ctx.lane_w - 6, TARGET_Y), 3)
+        lbl = F_ARROW.render(ARROWS[i], True, (pr, pg, pb))
         surf.blit(lbl, (scx - lbl.get_width() // 2,
-                        TARGET_Y + HIT_ZONE_H // 2 + 5))
+                        TARGET_Y + HIT_ZONE_H // 2 + 4))
 
 
 def draw_classical(surf, note: Note, ctx: RenderCtx):
     r, g, b = LANE_C[note.lane]
     scx     = _lcx(note.lane, ctx)
     nw      = ctx.note_w
-    rect    = pygame.Rect(scx - nw // 2, int(note.y), nw, NOTE_H)
-    pygame.draw.rect(surf, (r // 3, g // 3, b // 3), rect, border_radius=9)
-    pygame.draw.rect(surf, (r, g, b), rect, 3, border_radius=9)
+    ny      = int(note.y)
+    rect    = pygame.Rect(scx - nw // 2, ny, nw, NOTE_H)
+    # Neon glow
+    for gw in (10, 5):
+        gs = pygame.Surface((nw + gw*2, NOTE_H + gw*2), pygame.SRCALPHA)
+        alpha = int(35 * (1 - gw/12))
+        pygame.draw.rect(gs, (r, g, b, alpha),
+                         (0, 0, nw + gw*2, NOTE_H + gw*2), border_radius=11)
+        surf.blit(gs, (rect.x - gw, ny - gw))
+    pygame.draw.rect(surf, (r//4, g//4, b//4), rect, border_radius=9)
+    pygame.draw.rect(surf, (r, g, b),           rect, 3, border_radius=9)
     ar = F_ARROW.render(ARROWS[note.lane], True, (r, g, b))
     surf.blit(ar, (scx - ar.get_width() // 2,
-                   int(note.y) + (NOTE_H - ar.get_height()) // 2))
+                   ny + (NOTE_H - ar.get_height()) // 2))
 
 
 def draw_quantum(surf, note: Note, ctx: RenderCtx):
@@ -810,55 +851,76 @@ def draw_quantum(surf, note: Note, ctx: RenderCtx):
 
 def draw_top(surf, ps: PlayerState, ctx: RenderCtx, label: str = ""):
     sw = ctx.sw
-    pygame.draw.rect(surf, (10, 8, 26), (0, 0, sw, TOP_H))
-    pygame.draw.line(surf, (55, 45, 100), (0, TOP_H - 1), (sw, TOP_H - 1))
+    pygame.draw.rect(surf, (4, 2, 14), (0, 0, sw, TOP_H))
 
-    title_str = "✦  QUANTUM DANCE  ✦" + (f"  —  {label}" if label else "")
-    title = F_TITLE.render(title_str, True, Q_PURPLE)
-    surf.blit(title, (sw // 2 - title.get_width() // 2, 8))
+    # Animated neon border at bottom of header
+    pulse = 0.6 + 0.4 * math.sin(tick * 0.07)
+    cols  = [(255,60,180),(255,160,0),(80,255,80),(0,200,255),(200,80,255)]
+    for i, col in enumerate(cols):
+        c = tuple(min(255, int(v * pulse * 0.8)) for v in col)
+        pygame.draw.line(surf, c, (0, TOP_H - 1 - i), (sw, TOP_H - 1 - i))
 
+    # Rainbow cycling title (same style as menu)
+    title_str = "QUANTUM DANCE" + (f"  —  {label}" if label else "")
+    tx = sw // 2 - sum(F_TITLE.size(ch)[0] for ch in title_str) // 2
+    for i, ch in enumerate(title_str):
+        hue = (tick * 2 + i * 20) % 360
+        h = hue / 60.0
+        x = int(255 * (1 - abs(h % 2 - 1)))
+        if   h < 1: r2,g2,b2 = 255,  x,  0
+        elif h < 2: r2,g2,b2 =   x,255,  0
+        elif h < 3: r2,g2,b2 =   0,255,  x
+        elif h < 4: r2,g2,b2 =   0,  x,255
+        elif h < 5: r2,g2,b2 =   x,  0,255
+        else:       r2,g2,b2 = 255,  0,  x
+        cs = F_TITLE.render(ch, True, (r2, g2, b2))
+        surf.blit(cs, (tx, 6))
+        tx += cs.get_width()
+
+    # Score — neon gold, left
     sc = F_MED.render(f"SCORE  {ps.score:07d}", True, GOLD)
-    surf.blit(sc, (18, 10))
+    surf.blit(sc, (10, 48))
 
-    cb = F_MED.render(f"COMBO  ×{ps.combo}", True, GOLD if ps.combo >= 10 else WHITE)
-    surf.blit(cb, (sw - cb.get_width() - 18, 10))
-    mc = F_SM.render(f"best ×{ps.max_combo}", True, DIM)
-    surf.blit(mc, (sw - mc.get_width() - 18, 32))
-    qc = F_SM.render(f"collapses: {q_collapsed}/{q_total}", True, (170, 70, 230))
-    surf.blit(qc, (18, 34))
+    # Combo — right, pulses when active
+    combo_col = GOLD if ps.combo >= 10 else WHITE
+    cb = F_MED.render(f"×{ps.combo}  COMBO", True, combo_col)
+    surf.blit(cb, (sw - cb.get_width() - 10, 48))
 
-    sub = F_XSM.render(
-        "Classical notes: ONE lane.   "
-        "Quantum notes: TWO lanes — collapse to one before the hit zone.",
-        True, DIM)
-    surf.blit(sub, (sw // 2 - sub.get_width() // 2, 65))
+    # Collapses — small centre
+    qc = F_XSM.render(f"collapses  {q_collapsed}/{q_total}", True, (170, 70, 230))
+    surf.blit(qc, (sw // 2 - qc.get_width() // 2, 52))
 
 
 def draw_bottom(surf, ctx: RenderCtx):
     sw = ctx.sw
     y0 = SH - BOT_H
-    pygame.draw.rect(surf, (10, 8, 26), (0, y0, sw, BOT_H))
-    pygame.draw.line(surf, (55, 45, 100), (0, y0), (sw, y0))
+    pygame.draw.rect(surf, (4, 2, 14), (0, y0, sw, BOT_H))
+
+    # Neon top border matching header style
+    pulse = 0.6 + 0.4 * math.sin(tick * 0.07 + 1.5)
+    cols  = [(0,200,255),(200,80,255),(255,60,180),(255,160,0),(80,255,80)]
+    for i, col in enumerate(cols):
+        c = tuple(min(255, int(v * pulse * 0.8)) for v in col)
+        pygame.draw.line(surf, c, (0, y0 + i), (sw, y0 + i))
 
     pct = int(bias_slider.val)
-    bias_txt = f"⬡  Quantum — 2 lanes, collapses {pct}% lane 1 / {100 - pct}% lane 2"
+    bias_txt = f"⬡  Quantum — 2 lanes  |  {pct}% lane 1 / {100-pct}% lane 2"
     for i, (txt, col) in enumerate([
-        ("■  Classical — stays in its lane", WHITE),
-        (bias_txt, SL_BIAS_C),
+        ("■  Classical — stays in its lane", (180, 220, 255)),
+        (bias_txt, (200, 100, 255)),
     ]):
-        surf.blit(F_SM.render(txt, True, col), (18, y0 + 12 + i * 22))
+        surf.blit(F_XSM.render(txt, True, col), (14, y0 + 14 + i * 18))
 
     if n_players == 2:
-        hint = F_XSM.render("2P: entangled collapse — P1 & P2 get opposite lanes", True, (170, 70, 230))
-        surf.blit(hint, (sw - hint.get_width() - 18, y0 + 14))
-        ctrl = F_XSM.render("P2 keys: A ↔  S ↓  W ↑  D →", True, DIM)
-        surf.blit(ctrl, (sw - ctrl.get_width() - 18, y0 + 31))
+        hint = F_XSM.render("2P: entangled collapse — opposite lanes", True, (170, 70, 230))
+        surf.blit(hint, (sw - hint.get_width() - 14, y0 + 14))
+        ctrl = F_XSM.render("P2: A ↔  S ↓  W ↑  D →", True, DIM)
+        surf.blit(ctrl, (sw - ctrl.get_width() - 14, y0 + 32))
     else:
-        lines = ["In quantum mechanics a particle can be",
-                 "in multiple states until it is MEASURED."]
+        lines = ["Quantum: particle exists in multiple", "states until MEASURED  ⬡"]
         for i, line in enumerate(lines):
             t = F_XSM.render(line, True, DIM)
-            surf.blit(t, (sw - t.get_width() - 18, y0 + 14 + i * 17))
+            surf.blit(t, (sw - t.get_width() - 14, y0 + 14 + i * 17))
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -994,21 +1056,50 @@ def draw_menu():
 # ─────────────────────────────────────────────────────────────────────────────
 def draw_song_select(cursor: int, num_players: int) -> list:
     """Draw song list; returns list of row rects for click detection."""
-    screen.fill(BG)
+    t = _menu_tick
+    screen.fill((4, 2, 14))
 
-    title = F_TITLE.render("✦  SELECT SONG  ✦", True, Q_PURPLE)
-    screen.blit(title, (SW // 2 - title.get_width() // 2, 40))
+    # Starfield
+    rng = random.Random(42)
+    for _ in range(100):
+        sx = rng.randint(0, SW); sy = rng.randint(0, SH)
+        twinkle = 0.4 + 0.6 * math.sin(t * 0.04 + rng.random() * math.tau)
+        br = int(50 * twinkle)
+        pygame.draw.circle(screen, (br, br, br + 15), (sx, sy), 1)
+
+    # Marquee border
+    cols = [(255,60,180),(255,160,0),(80,255,80),(0,200,255),(200,80,255)]
+    pulse = 0.6 + 0.4 * math.sin(t * 0.07)
+    for i, col in enumerate(cols):
+        c = tuple(min(255, int(v * pulse * 0.7)) for v in col)
+        pygame.draw.rect(screen, c, (i*3, i*3, SW - i*6, SH - i*6), 2)
+
+    # Rainbow title
+    title_str = "SELECT  SONG"
+    tx = SW // 2 - sum(F_TITLE.size(ch)[0] for ch in title_str) // 2
+    for i, ch in enumerate(title_str):
+        hue = (t * 2 + i * 22) % 360
+        h = hue / 60.0
+        x2 = int(255 * (1 - abs(h % 2 - 1)))
+        if   h < 1: rc,gc,bc = 255, x2,  0
+        elif h < 2: rc,gc,bc =  x2,255,  0
+        elif h < 3: rc,gc,bc =   0,255, x2
+        elif h < 4: rc,gc,bc =   0, x2,255
+        elif h < 5: rc,gc,bc =  x2,  0,255
+        else:       rc,gc,bc = 255,  0, x2
+        cs = F_TITLE.render(ch, True, (rc, gc, bc))
+        screen.blit(cs, (tx, 26)); tx += cs.get_width()
 
     mode_lbl = F_MENUSM.render(
         f"{'1 PLAYER' if num_players == 1 else '2 PLAYERS'}  —  choose a track",
-        True, DIM)
-    screen.blit(mode_lbl, (SW // 2 - mode_lbl.get_width() // 2, 86))
+        True, (140, 100, 200))
+    screen.blit(mode_lbl, (SW // 2 - mode_lbl.get_width() // 2, 72))
 
     mx, my = pygame.mouse.get_pos()
     row_h  = 72
     row_w  = 720
     rx0    = (SW - row_w) // 2
-    ry0    = 140
+    ry0    = 118
     rects  = []
 
     for i, song in enumerate(SONGS):
@@ -1017,41 +1108,58 @@ def draw_song_select(cursor: int, num_players: int) -> list:
         hover  = rect.collidepoint(mx, my)
         active = i == cursor
 
-        fill   = (50, 25, 90) if active else ((30, 15, 60) if hover else (16, 10, 38))
-        border = Q_PURPLE     if active else ((160, 80, 200) if hover else (50, 35, 80))
+        if active:
+            ap = 0.7 + 0.3 * math.sin(t * 0.10)
+            fill   = (int(50*ap), int(15*ap), int(90*ap))
+            border = tuple(min(255, int(v*ap)) for v in Q_PURPLE)
+        else:
+            fill   = (22, 12, 44) if hover else (12, 8, 28)
+            border = (120, 60, 180) if hover else (40, 28, 70)
+
+        # Glow on active
+        if active:
+            for gw in (8, 4):
+                gs = pygame.Surface((row_w + gw*2, row_h - 6 + gw*2), pygame.SRCALPHA)
+                pygame.draw.rect(gs, (*Q_PURPLE, int(25*(1-gw/10))),
+                                 (0,0,row_w+gw*2,row_h-6+gw*2), border_radius=12)
+                screen.blit(gs, (rx0 - gw, ry - gw))
+
         pygame.draw.rect(screen, fill,   rect, border_radius=10)
         pygame.draw.rect(screen, border, rect, 2 if active else 1, border_radius=10)
         rects.append(rect)
 
-        # Number
-        num_s = F_MED.render(f"{i + 1}", True, (120, 80, 180) if not active else WHITE)
+        nc = WHITE if active else (180, 100, 255)
+        num_s = F_MED.render(f"{i + 1}", True, nc)
         screen.blit(num_s, (rx0 + 18, ry + (row_h - 6 - num_s.get_height()) // 2))
 
-        # Title + artist
-        title_s  = F_MED.render(song["title"],  True, WHITE if active else (200, 190, 230))
-        artist_s = F_SM.render(song["artist"],  True, DIM)
+        title_s  = F_MED.render(song["title"],  True, WHITE if active else (200, 180, 240))
+        artist_s = F_SM.render(song["artist"],  True, (120, 100, 180))
         screen.blit(title_s,  (rx0 + 50, ry + 8))
         screen.blit(artist_s, (rx0 + 50, ry + 8 + title_s.get_height()))
 
-        # BPM
-        bpm_s = F_SM.render(f"{song['bpm']} BPM", True, (140, 200, 255))
+        bpm_s = F_SM.render(f"{song['bpm']} BPM", True, (80, 180, 255))
         screen.blit(bpm_s, (rx0 + row_w - 210, ry + (row_h - 6 - bpm_s.get_height()) // 2))
 
-        # Difficulty badge
         diff   = song["difficulty"]
         dc     = DIFF_COLOR[diff]
         diff_s = F_SM.render(diff, True, dc)
         bw, bh = diff_s.get_width() + 16, diff_s.get_height() + 6
-        bx     = rx0 + row_w - bw - 12
+        bx_    = rx0 + row_w - bw - 12
         by_    = ry + (row_h - 6 - bh) // 2
-        pygame.draw.rect(screen, (dc[0] // 5, dc[1] // 5, dc[2] // 5),
-                         (bx, by_, bw, bh), border_radius=6)
-        pygame.draw.rect(screen, dc, (bx, by_, bw, bh), 1, border_radius=6)
-        screen.blit(diff_s, (bx + 8, by_ + 3))
+        pygame.draw.rect(screen, (dc[0]//6, dc[1]//6, dc[2]//6),
+                         (bx_, by_, bw, bh), border_radius=6)
+        pygame.draw.rect(screen, dc, (bx_, by_, bw, bh), 1, border_radius=6)
+        screen.blit(diff_s, (bx_ + 8, by_ + 3))
 
-    hint = F_XSM.render("↑↓ navigate     Enter / click to select     ESC back",
-                         True, (70, 60, 100))
-    screen.blit(hint, (SW // 2 - hint.get_width() // 2, ry0 + len(SONGS) * row_h + 10))
+    hint = F_XSM.render("↑↓  navigate     Enter / click  select     ESC  back",
+                         True, (70, 55, 100))
+    screen.blit(hint, (SW // 2 - hint.get_width() // 2, ry0 + len(SONGS) * row_h + 8))
+
+    # CRT scanlines
+    scan = pygame.Surface((SW, SH), pygame.SRCALPHA)
+    for y in range(0, SH, 4):
+        pygame.draw.line(scan, (0, 0, 0, 28), (0, y), (SW, y))
+    screen.blit(scan, (0, 0))
 
     pygame.display.flip()
     return rects
@@ -1303,7 +1411,7 @@ def update():
 
 def _render_player(surf, ps: PlayerState, ctx: RenderCtx, label: str = ""):
     sw = ctx.sw
-    surf.fill(BG)
+    surf.fill((4, 2, 14))
     draw_lanes(surf, ps.key_flash, ctx)
     draw_hit_zone(surf, ctx)
 
