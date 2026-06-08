@@ -720,6 +720,7 @@ tick               = 0
 spawn_timer        = 55
 collapsed_outcomes : dict = {}   # nid → (p1_lane, p2_lane)
 last_beat          = -1
+_game_elapsed      = 0.0   # seconds since game started (fallback timer)
 
 p1 : PlayerState = None
 p2 : PlayerState = None
@@ -1315,7 +1316,7 @@ def draw_results():
 # ─────────────────────────────────────────────────────────────────────────────
 def start_game(num_players: int, song: dict):
     global n_players, game_state, p1, p2, last_song
-    global q_collapsed, q_total, tick, spawn_timer, collapsed_outcomes, last_beat
+    global q_collapsed, q_total, tick, spawn_timer, collapsed_outcomes, last_beat, _game_elapsed
     global win2, ren2, surf2
     global SONG_FILE, SONG_BPM, SONG_OFFSET, SONG_DURATION, _active_beats_fall
     global two_screen_mode, split_mode, ctx1, ctx2
@@ -1332,13 +1333,14 @@ def start_game(num_players: int, song: dict):
     speed_mult         = DIFF_SPEED[song["difficulty"]]
     _active_beats_fall = max(2.0, BEATS_TO_FALL / speed_mult)
 
-    q_collapsed = 0
-    q_total     = 0
-    tick        = 0
-    spawn_timer = 55
+    q_collapsed    = 0
+    q_total        = 0
+    tick           = 0
+    spawn_timer    = 55
     collapsed_outcomes = {}
-    last_beat   = -1
-    Note._nid   = 0
+    last_beat      = -1
+    _game_elapsed  = 0.0
+    Note._nid      = 0
 
     # Tear down any existing second window
     if win2 is not None:
@@ -1412,9 +1414,10 @@ def stop_game():
 # Per-frame update
 # ─────────────────────────────────────────────────────────────────────────────
 def update():
-    global spawn_timer, q_collapsed, tick, last_beat
+    global spawn_timer, q_collapsed, tick, last_beat, _game_elapsed
 
     tick += 1
+    _game_elapsed += 1.0 / FPS
 
     # Spawning
     if SONG_FILE and pygame.mixer.music.get_busy():
@@ -1591,22 +1594,26 @@ def main():
                 q_collapsed += 1
 
         # ── Duration-based fade & auto-end ───────────────────────────────────
-        if SONG_FILE and pygame.mixer.music.get_busy():
+        music_playing = SONG_FILE and pygame.mixer.music.get_busy()
+        if music_playing:
             elapsed_ms  = pygame.mixer.music.get_pos()
             elapsed_sec = max(0.0, elapsed_ms / 1000.0 - SONG_OFFSET)
             time_left   = SONG_DURATION - elapsed_sec
             if time_left <= 0:
-                # Time's up — stop music and let notes drain
                 try: pygame.mixer.music.stop()
                 except Exception: pass
             elif time_left <= FADE_START:
-                # Smooth fade: volume 1.0 → 0.0 over FADE_START seconds
                 vol = max(0.0, time_left / FADE_START)
                 try: pygame.mixer.music.set_volume(vol)
                 except Exception: pass
 
         # ── Transition to RESULTS ─────────────────────────────────────────────
-        song_done = SONG_FILE and not pygame.mixer.music.get_busy()
+        # Use music position when available; fall back to elapsed clock timer
+        if music_playing:
+            song_done = not pygame.mixer.music.get_busy()
+        else:
+            song_done = SONG_FILE is not None and _game_elapsed >= SONG_DURATION
+
         if song_done and not p1.notes and (p2 is None or not p2.notes):
             try: pygame.mixer.music.set_volume(1.0)
             except Exception: pass
