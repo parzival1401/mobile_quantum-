@@ -283,6 +283,43 @@ ctx1: RenderCtx = None    # P1 render context
 ctx2: RenderCtx = None    # P2 render context
 
 
+def _find_second_monitor_x() -> int | None:
+    """
+    Return the X offset where the second physical monitor starts, or None if
+    only one monitor is detected.
+
+    Strategy:
+    1. Parse `xrandr` output (Linux/Pi) — works even when SDL2 sees only 1 display
+       because the whole desktop is one big virtual screen.
+    2. Fall back to pygame.display.get_desktop_sizes() (macOS / Windows).
+    """
+    # ── xrandr (Linux) ───────────────────────────────────────────────────────
+    try:
+        import subprocess, re
+        out = subprocess.check_output(["xrandr", "--query"],
+                                      stderr=subprocess.DEVNULL).decode()
+        # Match lines like: HDMI-A-1 connected 1920x1080+1920+0
+        pattern = re.compile(r'^\S+ connected \d+x\d+\+(\d+)\+\d+', re.MULTILINE)
+        xs = sorted(int(m.group(1)) for m in pattern.finditer(out))
+        # xs is a list of X offsets for each connected monitor, e.g. [0, 1920, 3840]
+        if len(xs) >= 2:
+            # P1 gets the monitor at x=0 (main screen), P2 gets the next one
+            return xs[1]
+    except Exception:
+        pass
+
+    # ── pygame fallback (macOS / Windows) ────────────────────────────────────
+    try:
+        n = pygame.display.get_num_displays()
+        if n >= 2:
+            sizes = pygame.display.get_desktop_sizes()
+            return sizes[0][0]   # width of display 0 = x-start of display 1
+    except Exception:
+        pass
+
+    return None
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # BPM timing helpers
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1316,22 +1353,16 @@ def start_game(num_players: int, song: dict):
     split_mode      = False
 
     if num_players == 2:
-        try:
-            n_displays = pygame.display.get_num_displays()
-        except Exception:
-            n_displays = 1
+        p2_x = _find_second_monitor_x()
 
-        if n_displays >= 2:
+        if p2_x is not None:
             # Option A — two physical monitors
             try:
                 from pygame._sdl2.video import Window, Renderer
                 two_screen_mode = True
                 split_mode      = False
-                # Place P2 window at x = width of display 0 so it lands on display 1
-                sizes = pygame.display.get_desktop_sizes()
-                d0_w  = sizes[0][0] if sizes else SW
                 win2  = Window("Quantum Dance — Player 2", size=(SW, SH))
-                win2.position = (d0_w, 0)
+                win2.position = (p2_x, 0)
                 ren2  = Renderer(win2)
                 surf2 = pygame.Surface((SW, SH))
                 ctx1  = make_ctx(SW)
