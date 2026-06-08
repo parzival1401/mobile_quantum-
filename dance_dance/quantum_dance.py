@@ -440,9 +440,9 @@ def _find_second_monitor_x() -> int | None:
 # BPM timing helpers
 # ─────────────────────────────────────────────────────────────────────────────
 def _bpm_fall_speed() -> float:
-    """px/frame for a note to travel FALL_DISTANCE in _active_beats_fall beats."""
+    """px/second for a note to travel FALL_DISTANCE in _active_beats_fall beats."""
     seconds = _active_beats_fall * 60.0 / SONG_BPM
-    return (FALL_DISTANCE / seconds) / FPS
+    return FALL_DISTANCE / seconds   # px/sec — frame-rate independent
 
 def _bpm_collapse_y() -> int:
     """Collapse 1 beat before the note reaches TARGET_Y."""
@@ -604,7 +604,7 @@ class Note:
         self.final_lane   = lane
         self.dropped_lane = None
         self.y            = float(LANE_TOP - NOTE_H - 8)
-        self.speed        = get_fall_speed() + random.uniform(-0.2, 0.2)
+        self.speed        = get_fall_speed() + random.uniform(-8.0, 8.0)  # px/sec
         self.alive        = True
         self.hit          = False
         self.missed       = False
@@ -621,15 +621,14 @@ class Note:
         if d <= HIT_GOOD:    return "GOOD"
         return None
 
-    def update(self, collapsed_outcomes: dict, player_idx: int):
+    def update(self, collapsed_outcomes: dict, player_idx: int, dt: float):
         """
         collapsed_outcomes: shared dict  nid → (p1_lane, p2_lane)
-        player_idx: 0 = P1, 1 = P2
-        In 1P mode player_idx is always 0.
+        player_idx: 0 = P1, 1 = P2  |  dt: seconds since last frame
         """
         self.just_collapsed = False
         self.just_missed    = False
-        self.y += self.speed
+        self.y += self.speed * dt
 
         if self.quantum and not self.collapsed and self.y >= get_collapse_y():
             self.collapsed      = True
@@ -771,9 +770,9 @@ class PlayerState:
             self.floats.append(FloatText("EARLY", scx, TARGET_Y - 42, (255, 180, 0)))
             _play(SFX_MISS)
 
-    def update(self, collapsed_outcomes: dict):
+    def update(self, collapsed_outcomes: dict, dt: float):
         for note in self.notes:
-            note.update(collapsed_outcomes, self.idx)
+            note.update(collapsed_outcomes, self.idx, dt)
             if note.just_collapsed:
                 cx = (_lcx(note.dropped_lane, self.ctx) if self.ctx
                       else lcx(note.dropped_lane))
@@ -809,7 +808,7 @@ class PlayerState:
 q_collapsed        = 0
 q_total            = 0
 tick               = 0
-spawn_timer        = 55
+spawn_timer        = 0.9   # seconds until first note spawn
 collapsed_outcomes : dict = {}   # nid → (p1_lane, p2_lane)
 last_beat          = -1
 _game_elapsed      = 0.0   # seconds since game started (fallback timer)
@@ -1392,7 +1391,7 @@ def start_game(num_players: int, song: dict):
     q_collapsed    = 0
     q_total        = 0
     tick           = 0
-    spawn_timer    = 55
+    spawn_timer    = 0.9   # seconds
     collapsed_outcomes = {}
     last_beat      = -1
     _game_elapsed  = 0.0
@@ -1469,30 +1468,29 @@ def stop_game():
 # ─────────────────────────────────────────────────────────────────────────────
 # Per-frame update
 # ─────────────────────────────────────────────────────────────────────────────
-def update():
+def update(dt: float, music_pos_ms: int = -1):
     global spawn_timer, q_collapsed, tick, last_beat, _game_elapsed
 
     tick += 1
-    _game_elapsed += 1.0 / FPS
+    _game_elapsed += dt   # actual elapsed seconds, not fixed 1/FPS
 
     # Spawning
-    if SONG_FILE and pygame.mixer.music.get_busy():
-        pos_ms     = pygame.mixer.music.get_pos()
-        beat_time  = max(0.0, pos_ms / 1000.0 - SONG_OFFSET)
-        beat_num   = beat_time * SONG_BPM / 60.0
-        cur_beat   = int(beat_num)
+    if music_pos_ms >= 0:
+        beat_time = max(0.0, music_pos_ms / 1000.0 - SONG_OFFSET)
+        beat_num  = beat_time * SONG_BPM / 60.0
+        cur_beat  = int(beat_num)
         if cur_beat > last_beat and cur_beat % BEATS_PER_NOTE == 0:
             spawn_note()
             last_beat = cur_beat
     else:
-        spawn_timer -= 1
+        spawn_timer -= dt
         if spawn_timer <= 0:
             spawn_note()
-            base = get_spawn_interval()
-            spawn_timer = random.randint(int(base * 0.78), int(base * 1.35))
+            base_sec    = get_spawn_interval() / 60.0   # frames→seconds
+            spawn_timer = random.uniform(base_sec * 0.78, base_sec * 1.35)
 
-    p1.update(collapsed_outcomes)
-    if p2: p2.update(collapsed_outcomes)
+    p1.update(collapsed_outcomes, dt)
+    if p2: p2.update(collapsed_outcomes, dt)
 
 
 def _render_player(surf, ps: PlayerState, ctx: RenderCtx, label: str = ""):
@@ -1546,7 +1544,7 @@ def main():
     song_rects: list = []
 
     while True:
-        clk.tick(30 if _LOW_PERF else FPS)
+        dt = min(clk.tick(30 if _LOW_PERF else FPS) / 1000.0, 0.05)
 
         # ── MENU ──────────────────────────────────────────────────────────────
         if game_state == GameState.MENU:
@@ -1672,17 +1670,18 @@ def main():
                         elif p2 and event.joy == 1:
                             p2.handle_key(lane)
 
-        update()
+        music_playing  = SONG_FILE and pygame.mixer.music.get_busy()
+        music_pos_ms   = pygame.mixer.music.get_pos() if music_playing else -1
+
+        update(dt, music_pos_ms)
         for nid in collapsed_outcomes:
             if nid not in _seen_collapsed_nids:
                 _seen_collapsed_nids.add(nid)
                 q_collapsed += 1
 
         # ── Duration-based fade & auto-end ───────────────────────────────────
-        music_playing = SONG_FILE and pygame.mixer.music.get_busy()
         if music_playing:
-            elapsed_ms  = pygame.mixer.music.get_pos()
-            elapsed_sec = max(0.0, elapsed_ms / 1000.0 - SONG_OFFSET)
+            elapsed_sec = max(0.0, music_pos_ms / 1000.0 - SONG_OFFSET)
             time_left   = SONG_DURATION - elapsed_sec
             if time_left <= 0:
                 try: pygame.mixer.music.stop()
