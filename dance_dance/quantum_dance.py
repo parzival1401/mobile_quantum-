@@ -235,6 +235,28 @@ KEYS_P1 = [pygame.K_LEFT, pygame.K_DOWN, pygame.K_UP, pygame.K_RIGHT]
 KEYS_P2 = [pygame.K_a,    pygame.K_s,    pygame.K_w,  pygame.K_d]
 ARROWS  = ["←", "↓", "↑", "→"]
 
+# ── Dance mat joystick input ──────────────────────────────────────────────────
+# Button mapping confirmed from hardware test (Vendor 0e8f, Product 0035)
+MAT_UP    = 0   # BTN_TRIGGER  code 288
+MAT_DOWN  = 1   # BTN_THUMB    code 289
+MAT_LEFT  = 2   # BTN_THUMB2   code 290
+MAT_RIGHT = 3   # BTN_TOP      code 291
+# MAT button → lane index (same order as KEYS_P1/P2: left=0 down=1 up=2 right=3)
+_MAT_BTN_TO_LANE = {MAT_LEFT: 0, MAT_DOWN: 1, MAT_UP: 2, MAT_RIGHT: 3}
+
+# Debounce: track last-press tick per (joy_id, button)
+_mat_last: dict = {}
+_MAT_DEBOUNCE = 6   # frames
+
+def _mat_lane(btn: int) -> int | None:
+    return _MAT_BTN_TO_LANE.get(btn)
+
+pygame.joystick.init()
+_mats: list = [pygame.joystick.Joystick(i)
+               for i in range(pygame.joystick.get_count())]
+if _mats:
+    print(f"[INFO] {len(_mats)} dance mat(s) detected")
+
 RP_X = LX0 + TOTAL_W   # 736
 RP_W = SW - RP_X        # 224
 
@@ -1530,6 +1552,11 @@ def main():
                         n_players   = 2
                         song_cursor = 0
                         game_state  = GameState.SONG_SELECT
+                elif event.type == pygame.JOYBUTTONDOWN:
+                    # Any mat button selects number of connected mats as player count
+                    n_players   = min(2, len(_mats))
+                    song_cursor = 0
+                    game_state  = GameState.SONG_SELECT
             continue
 
         # ── SONG SELECT ───────────────────────────────────────────────────────
@@ -1549,7 +1576,6 @@ def main():
                     elif event.key == pygame.K_RETURN:
                         start_game(n_players, SONGS[song_cursor])
                     else:
-                        # Number keys 1–6
                         for idx in range(len(SONGS)):
                             if event.key == getattr(pygame, f"K_{idx + 1}", None):
                                 song_cursor = idx
@@ -1559,6 +1585,15 @@ def main():
                         if rect.collidepoint(event.pos):
                             song_cursor = idx
                             start_game(n_players, SONGS[song_cursor])
+                elif event.type == pygame.JOYBUTTONDOWN:
+                    if event.button == MAT_UP:
+                        song_cursor = (song_cursor - 1) % len(SONGS)
+                    elif event.button == MAT_DOWN:
+                        song_cursor = (song_cursor + 1) % len(SONGS)
+                    elif event.button == MAT_RIGHT:
+                        start_game(n_players, SONGS[song_cursor])
+                    elif event.button == MAT_LEFT:
+                        game_state = GameState.MENU
             continue
 
         # ── RESULTS ───────────────────────────────────────────────────────────
@@ -1572,6 +1607,11 @@ def main():
                         stop_game()
                     elif event.key == pygame.K_r and last_song:
                         start_game(n_players, last_song)
+                elif event.type == pygame.JOYBUTTONDOWN:
+                    if event.button == MAT_RIGHT and last_song:
+                        start_game(n_players, last_song)   # right = play again
+                    elif event.button == MAT_LEFT:
+                        stop_game()                         # left = back to menu
             continue
 
         # ── PLAYING ───────────────────────────────────────────────────────────
@@ -1597,6 +1637,17 @@ def main():
                     for i, k in enumerate(KEYS_P2):
                         if event.key == k:
                             p2.handle_key(i)
+
+            elif event.type == pygame.JOYBUTTONDOWN:
+                key = (event.joy, event.button)
+                if tick - _mat_last.get(key, -_MAT_DEBOUNCE) >= _MAT_DEBOUNCE:
+                    _mat_last[key] = tick
+                    lane = _mat_lane(event.button)
+                    if lane is not None:
+                        if event.joy == 0:
+                            p1.handle_key(lane)
+                        elif p2 and event.joy == 1:
+                            p2.handle_key(lane)
 
         update()
         for nid in collapsed_outcomes:
