@@ -717,8 +717,8 @@ def draw_lanes(surf, key_flash, ctx: RenderCtx):
         sx = rng.randint(0, ctx.sw)
         sy = rng.randint(LANE_TOP, LANE_BOT)
         twinkle = 0.4 + 0.6 * math.sin(tick * 0.04 + rng.random() * math.tau)
-        br = int(55 * twinkle)
-        pygame.draw.circle(surf, (br, br, br + 15), (sx, sy), 1)
+        br = max(0, min(240, int(55 * twinkle)))
+        pygame.draw.circle(surf, (br, br, min(255, br + 15)), (sx, sy), 1)
 
     for i in range(N_LANES):
         x    = _lx(i, ctx)
@@ -1064,7 +1064,7 @@ def draw_song_select(cursor: int, num_players: int) -> list:
     for _ in range(100):
         sx = rng.randint(0, SW); sy = rng.randint(0, SH)
         twinkle = 0.4 + 0.6 * math.sin(t * 0.04 + rng.random() * math.tau)
-        br = int(50 * twinkle)
+        br = max(0, min(240, int(50 * twinkle)))
         pygame.draw.circle(screen, (br, br, min(255, br + 15)), (sx, sy), 1)
 
     # Marquee border
