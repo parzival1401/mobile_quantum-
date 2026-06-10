@@ -29,9 +29,9 @@ Controls (in-game)
 # ─────────────────────────────────────────────────────────────────────────────
 # FIXED TIMING CONSTANTS  (overridden at runtime by song selection)
 # ─────────────────────────────────────────────────────────────────────────────
-BEATS_PER_NOTE       = 2  # spawn one note every N beats
-BEATS_TO_FALL        = 4    # base beats from spawn to hit zone (scaled by difficulty)
-COLLAPSE_THRESHOLD   = 2.0  # multiplier: higher = collapse line moves up (more warning)
+BEATS_PER_NOTE       = 1    # spawn one note every N beats
+BEATS_TO_FALL        = 5    # base beats from spawn to hit zone (scaled by difficulty)
+COLLAPSE_THRESHOLD   = 1  # multiplier: higher = collapse line moves up (more warning)
 
 # Active song settings — set by song select, do not edit directly
 SONG_FILE     = None
