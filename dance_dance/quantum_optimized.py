@@ -946,25 +946,43 @@ class Note:
 # ─────────────────────────────────────────────────────────────────────────────
 # Particle / FloatText  (surface-aware versions)
 # ─────────────────────────────────────────────────────────────────────────────
+# Lightweight particle tuning — kept cheap for Raspberry Pi:
+#  - integer math only, plain draw.circle (no per-particle surfaces/alpha)
+#  - hard cap on how many can exist per player at once
+#  - smaller bursts in _LOW_PERF mode
+_PARTICLE_MAX   = 40                     # hard cap per player
+_BURST_HIT      = 4 if _LOW_PERF else 10
+_BURST_MISS     = 3 if _LOW_PERF else 6
+_BURST_COLLAPSE = 5 if _LOW_PERF else 12
+
 class Particle:
+    __slots__ = ("x", "y", "vx", "vy", "life", "color", "size")
+
     def __init__(self, x, y, color, speed_scale=1.0):
         a  = random.uniform(0, math.tau)
-        sp = random.uniform(1.5, 6.0) * speed_scale
+        sp = random.uniform(1.5, 5.0) * speed_scale
         self.x, self.y   = float(x), float(y)
         self.vx, self.vy = math.cos(a) * sp, math.sin(a) * sp - 1.5
-        self.life     = random.randint(22, 48)
-        self.max_life = self.life
-        self.color    = color
-        self.size     = random.randint(2, 5)
+        self.life  = random.randint(14, 28)
+        self.color = color
+        self.size  = random.randint(2, 4)
 
     def update(self):
-        self.x += self.vx;  self.y += self.vy
-        self.vy += 0.18;    self.life -= 1
+        self.x += self.vx
+        self.y += self.vy
+        self.vy += 0.22          # gravity
+        self.life -= 1
 
     def draw(self, surf):
-        if self.life <= 0: return
-        pygame.draw.circle(surf, self.color,
-                           (int(self.x), int(self.y)), max(1, self.size))
+        # No alpha fade — just shrink the dot as it dies (cheaper than blending)
+        r = self.size if self.life > 6 else 1
+        pygame.draw.circle(surf, self.color, (int(self.x), int(self.y)), r)
+
+def _spawn_burst(plist, x, y, color, count, speed_scale=1.0):
+    """Add up to `count` particles, respecting the per-player hard cap."""
+    room = _PARTICLE_MAX - len(plist)
+    for _ in range(min(count, max(0, room))):
+        plist.append(Particle(x, y, color, speed_scale))
 
 
 class FloatText:
@@ -1031,6 +1049,7 @@ class PlayerState:
             self.last_milestone = 0
             self.miss_count += 1
             self.floats.append(FloatText("MISS", scx, TARGET_Y - 42, RED))
+            _spawn_burst(self.particles, scx, TARGET_Y, RED, _BURST_MISS)
             _play(SFX_MISS)
             return
 
@@ -1042,22 +1061,26 @@ class PlayerState:
                 self.score += 300 * max(1, self.combo // 5)
                 self.perfect_count += 1
                 self.floats.append(FloatText("PERFECT!", scx, TARGET_Y - 42, GOLD, F_MED))
+                _spawn_burst(self.particles, scx, TARGET_Y, LANE_C[lane], _BURST_HIT)
             else:
                 self.score += 100 * max(1, self.combo // 10)
                 self.good_count += 1
                 self.floats.append(FloatText("GOOD", scx, TARGET_Y - 42, WHITE))
+                _spawn_burst(self.particles, scx, TARGET_Y, LANE_C[lane], _BURST_MISS)
             for m in COMBO_MILESTONES:
                 if self.combo >= m and self.last_milestone < m:
                     self.last_milestone  = m
                     self.milestone_text  = f"COMBO  ×{m}!"
                     self.milestone_timer = 90
                     self.flash_timer     = 8
+                    _spawn_burst(self.particles, scx, TARGET_Y, GOLD, _BURST_COLLAPSE)
                     _play(SFX_MILESTONE)
         else:
             self.combo = 0
             self.last_milestone = 0
             self.miss_count += 1
             self.floats.append(FloatText("EARLY", scx, TARGET_Y - 42, (255, 180, 0)))
+            _spawn_burst(self.particles, scx, TARGET_Y, (255, 180, 0), _BURST_MISS)
             _play(SFX_MISS)
 
     def update(self, collapsed_outcomes: dict, dt: float):
@@ -1067,10 +1090,12 @@ class PlayerState:
             if note.just_collapsed:
                 cx = (_lcx(note.dropped_lane, self.ctx) if self.ctx
                       else lcx(note.dropped_lane))
+                ny = int(note.y) + NOTE_H // 2
                 self.floats.append(FloatText(
                     "COLLAPSED!", cx,
                     TARGET_Y - 42 + int(note.y - TARGET_Y) + NOTE_H // 2,
                     Q_PURPLE, F_SM))
+                _spawn_burst(self.particles, cx, ny, Q_WAVE, _BURST_COLLAPSE, 1.2)
                 _play(SFX_COLLAPSE)
             if note.just_missed:
                 self.combo = 0
@@ -1078,9 +1103,12 @@ class PlayerState:
                 self.miss_count += 1
                 miss_cx = (_lcx(note.lane, self.ctx) if self.ctx else lcx(note.lane))
                 self.floats.append(FloatText("MISS", miss_cx, TARGET_Y - 42, RED))
+                _spawn_burst(self.particles, miss_cx, TARGET_Y, RED, _BURST_MISS)
 
         self.notes[:]  = [n for n in self.notes  if n.alive]
         self.max_combo = max(self.max_combo, self.combo)
+        for p in self.particles: p.update()
+        self.particles[:] = [p for p in self.particles if p.life > 0]
         for f in self.floats: f.update()
         self.floats[:]    = [f for f in self.floats    if f.life > 0]
         for i in range(N_LANES):
@@ -1789,7 +1817,8 @@ def _render_player(surf, ps: PlayerState, ctx: RenderCtx, label: str = ""):
         else:
             draw_classical(surf, note, ctx)
 
-    for f in ps.floats: f.draw(surf)
+    for p in ps.particles: p.draw(surf)
+    for f in ps.floats:    f.draw(surf)
 
     draw_top(surf, ps, ctx, label)
     draw_bottom(surf, ctx)
