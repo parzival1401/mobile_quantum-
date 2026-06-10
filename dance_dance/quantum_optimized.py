@@ -447,9 +447,11 @@ ctx1: RenderCtx = None    # P1 render context
 ctx2: RenderCtx = None    # P2 render context
 
 
-def _find_second_monitor_x() -> int | None:
+def _get_monitor_x_positions() -> list:
     """
-    Return the X offset where the second physical monitor starts, or None.
+    Return a list of X offsets for all connected monitors, sorted ascending.
+    P1 always gets positions[0] (leftmost), P2 gets positions[1] (rightmost).
+    This makes plug order irrelevant — whichever screen is on the left is P1.
 
     Tries in order:
     1. wlr-randr  (Wayland/labwc — Raspberry Pi Trixie)
@@ -462,14 +464,12 @@ def _find_second_monitor_x() -> int | None:
     try:
         out = subprocess.check_output(["wlr-randr"],
                                       stderr=subprocess.DEVNULL).decode()
-        # Each monitor block starts with "HDMI-A-1" etc.
-        # Position line looks like:  Position: 1920,0
-        positions = []
-        for m in re.finditer(r'Position:\s*(\d+),\d+', out):
-            positions.append(int(m.group(1)))
-        positions = sorted(set(positions))
-        if len(positions) >= 2:
-            return positions[1]
+        positions = sorted(set(
+            int(m.group(1))
+            for m in re.finditer(r'Position:\s*(\d+),\d+', out)
+        ))
+        if len(positions) >= 1:
+            return positions
     except Exception:
         pass
 
@@ -478,20 +478,22 @@ def _find_second_monitor_x() -> int | None:
         out = subprocess.check_output(["xrandr", "--query"],
                                       stderr=subprocess.DEVNULL).decode()
         pattern = re.compile(r'^\S+ connected \d+x\d+\+(\d+)\+\d+', re.MULTILINE)
-        xs = sorted(int(m.group(1)) for m in pattern.finditer(out))
-        if len(xs) >= 2:
-            return xs[1]
+        positions = sorted(int(m.group(1)) for m in pattern.finditer(out))
+        if len(positions) >= 1:
+            return positions
     except Exception:
         pass
 
     # ── pygame fallback (macOS / Windows) ────────────────────────────────────
     try:
-        if pygame.display.get_num_displays() >= 2:
-            return pygame.display.get_desktop_sizes()[0][0]
+        n = pygame.display.get_num_displays()
+        if n >= 2:
+            sizes = pygame.display.get_desktop_sizes()
+            return [0, sizes[0][0]]
     except Exception:
         pass
 
-    return None
+    return []
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1450,14 +1452,26 @@ def start_game(num_players: int, song: dict):
     split_mode      = False
 
     if num_players == 2:
-        p2_x = _find_second_monitor_x()
+        mon_positions = _get_monitor_x_positions()
 
-        if p2_x is not None:
-            # Option A — two physical monitors
+        if len(mon_positions) >= 2:
+            # Option A — two physical monitors detected.
+            # P1 goes on leftmost monitor (positions[0]), P2 on next (positions[1]).
+            # Plug order doesn't matter — sorted by X so left=P1, right=P2.
+            p1_x = mon_positions[0]
+            p2_x = mon_positions[1]
             try:
                 from pygame._sdl2.video import Window, Renderer
                 two_screen_mode = True
                 split_mode      = False
+                # Move the main P1 window to the leftmost monitor
+                pygame.display.get_wm_info()   # ensure window handle is ready
+                try:
+                    from pygame._sdl2.video import Window as _Win
+                    _main = _Win.from_display_module()
+                    _main.position = (p1_x, 0)
+                except Exception:
+                    pass
                 win2  = Window("Quantum Dance — Player 2", size=(SW, SH))
                 win2.position = (p2_x, 0)
                 ren2  = Renderer(win2)
@@ -1472,7 +1486,7 @@ def start_game(num_players: int, song: dict):
                 ctx1 = make_ctx(SW // 2)
                 ctx2 = make_ctx(SW // 2)
         else:
-            # Option B — split-screen on one monitor
+            # Option B — only one monitor detected, split 50/50
             split_mode = True
             ctx1 = make_ctx(SW // 2)
             ctx2 = make_ctx(SW // 2)
