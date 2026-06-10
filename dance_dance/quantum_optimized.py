@@ -29,8 +29,9 @@ Controls (in-game)
 # ─────────────────────────────────────────────────────────────────────────────
 # FIXED TIMING CONSTANTS  (overridden at runtime by song selection)
 # ─────────────────────────────────────────────────────────────────────────────
-BEATS_PER_NOTE = 1    # spawn one note every N beats
-BEATS_TO_FALL  = 5    # base beats from spawn to hit zone (scaled by difficulty)
+BEATS_PER_NOTE       = 1    # spawn one note every N beats
+BEATS_TO_FALL        = 5    # base beats from spawn to hit zone (scaled by difficulty)
+COLLAPSE_THRESHOLD   = 2.0  # multiplier: higher = collapse line moves up (more warning)
 
 # Active song settings — set by song select, do not edit directly
 SONG_FILE     = None
@@ -654,7 +655,7 @@ def _bpm_fall_speed() -> float:
 def _bpm_collapse_y() -> int:
     """Collapse 1 beat before the note reaches TARGET_Y."""
     px_per_beat = (FALL_DISTANCE / (_active_beats_fall * 60.0 / SONG_BPM)) * (60.0 / SONG_BPM)
-    return int(TARGET_Y - px_per_beat)
+    return int(TARGET_Y - px_per_beat * COLLAPSE_THRESHOLD)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
