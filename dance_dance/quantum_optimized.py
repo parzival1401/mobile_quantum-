@@ -129,6 +129,48 @@ pygame.display.set_caption("Quantum Dance  |  Quantum Exhibition")
 clk    = pygame.time.Clock()
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Music player — uses a dedicated mixer channel instead of pygame.mixer.music
+# so it shares the same audio device as SFX (avoids ALSA "device busy" error)
+# ─────────────────────────────────────────────────────────────────────────────
+pygame.mixer.set_num_channels(16)   # reserve extra channels; ch 15 = music
+_MUSIC_CHANNEL   = pygame.mixer.Channel(15)
+_music_sound     = None   # currently loaded Sound object
+_music_start_ms  = 0      # pygame.time.get_ticks() when music started
+_music_volume    = 1.0
+
+def _music_load(path: str):
+    global _music_sound
+    try:
+        _music_sound = pygame.mixer.Sound(path)
+    except Exception as e:
+        print(f"[WARNING] Could not load music: {e}")
+        _music_sound = None
+
+def _music_play():
+    global _music_start_ms
+    if _music_sound is None: return
+    _MUSIC_CHANNEL.set_volume(_music_volume)
+    _MUSIC_CHANNEL.play(_music_sound)
+    _music_start_ms = pygame.time.get_ticks()
+
+def _music_stop():
+    _MUSIC_CHANNEL.stop()
+
+def _music_get_busy() -> bool:
+    return _MUSIC_CHANNEL.get_busy()
+
+def _music_get_pos() -> int:
+    """Returns milliseconds since music started, like pygame.mixer.music.get_pos()."""
+    if not _MUSIC_CHANNEL.get_busy():
+        return -1
+    return pygame.time.get_ticks() - _music_start_ms
+
+def _music_set_volume(vol: float):
+    global _music_volume
+    _music_volume = max(0.0, min(1.0, vol))
+    _MUSIC_CHANNEL.set_volume(_music_volume)
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Game state enum
 # ─────────────────────────────────────────────────────────────────────────────
 class GameState(Enum):
@@ -1506,22 +1548,18 @@ def start_game(num_players: int, song: dict):
     p1 = PlayerState(0, KEYS_P1, ctx1)
     p2 = PlayerState(1, KEYS_P2, ctx2) if num_players == 2 else None
 
-    # Music
+    # Music — loaded as Sound on dedicated channel to avoid ALSA device conflict
     if SONG_FILE:
-        try:
-            pygame.mixer.music.set_volume(1.0)
-            pygame.mixer.music.load(SONG_FILE)
-            pygame.mixer.music.play()
-        except Exception as e:
-            print(f"[WARNING] Could not load music: {e}")
+        _music_set_volume(1.0)
+        _music_load(SONG_FILE)
+        _music_play()
 
 
 def stop_game():
     global game_state, win2, ren2, surf2, SONG_FILE
     global two_screen_mode, split_mode, ctx1, ctx2
     game_state = GameState.MENU
-    try: pygame.mixer.music.stop()
-    except Exception: pass
+    _music_stop()
     SONG_FILE = None
     if win2 is not None:
         try: win2.destroy()
@@ -1739,8 +1777,8 @@ def main():
                         elif p2 and event.joy == 1:
                             p2.handle_key(lane)
 
-        music_playing  = SONG_FILE and pygame.mixer.music.get_busy()
-        music_pos_ms   = pygame.mixer.music.get_pos() if music_playing else -1
+        music_playing  = SONG_FILE and _music_get_busy()
+        music_pos_ms   = _music_get_pos() if music_playing else -1
 
         update(dt, music_pos_ms)
         for nid in collapsed_outcomes:
@@ -1753,23 +1791,18 @@ def main():
             elapsed_sec = max(0.0, music_pos_ms / 1000.0 - SONG_OFFSET)
             time_left   = SONG_DURATION - elapsed_sec
             if time_left <= 0:
-                try: pygame.mixer.music.stop()
-                except Exception: pass
+                _music_stop()
             elif time_left <= FADE_START:
-                vol = max(0.0, time_left / FADE_START)
-                try: pygame.mixer.music.set_volume(vol)
-                except Exception: pass
+                _music_set_volume(max(0.0, time_left / FADE_START))
 
         # ── Transition to RESULTS ─────────────────────────────────────────────
-        # Use music position when available; fall back to elapsed clock timer
         if music_playing:
-            song_done = not pygame.mixer.music.get_busy()
+            song_done = not _music_get_busy()
         else:
             song_done = SONG_FILE is not None and _game_elapsed >= SONG_DURATION
 
         if song_done and not p1.notes and (p2 is None or not p2.notes):
-            try: pygame.mixer.music.set_volume(1.0)
-            except Exception: pass
+            _music_set_volume(1.0)
             game_state = GameState.RESULTS
 
         # ── Render ────────────────────────────────────────────────────────────
