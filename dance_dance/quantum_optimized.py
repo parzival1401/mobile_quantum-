@@ -318,12 +318,14 @@ KEYS_P2 = [pygame.K_a,    pygame.K_s,    pygame.K_w,  pygame.K_d]
 ARROWS  = ["←", "↓", "↑", "→"]
 
 # ── Dance mat joystick input ──────────────────────────────────────────────────
-# Button mapping confirmed from hardware test (Vendor 0e8f, Product 0035)
-MAT_UP    = 0   # BTN_TRIGGER  code 288
-MAT_DOWN  = 1   # BTN_THUMB    code 289
-MAT_LEFT  = 2   # BTN_THUMB2   code 290
-MAT_RIGHT = 3   # BTN_TOP      code 291
-# MAT button → lane index (same order as KEYS_P1/P2: left=0 down=1 up=2 right=3)
+# Button mapping confirmed by hardware test (Vendor 0e8f, Product 0035)
+MAT_DOWN   = 0   # BTN_TRIGGER  code 288
+MAT_RIGHT  = 1   # BTN_THUMB    code 289
+MAT_LEFT   = 2   # BTN_THUMB2   code 290  (also START on mat1)
+MAT_UP     = 3   # BTN_TOP      code 291
+MAT_SELECT = 8   # BTN_BASE3    code 296
+MAT_START  = 9   # BTN_BASE4    code 297  (mat2 canonical START)
+# MAT button → lane index (left=0 down=1 up=2 right=3)
 _MAT_BTN_TO_LANE = {MAT_LEFT: 0, MAT_DOWN: 1, MAT_UP: 2, MAT_RIGHT: 3}
 
 # Debounce: track last-press tick per (joy_id, button)
@@ -1707,10 +1709,13 @@ def main():
                         song_cursor = 0
                         game_state  = GameState.SONG_SELECT
                 elif event.type == pygame.JOYBUTTONDOWN:
-                    # Any mat button selects number of connected mats as player count
-                    n_players   = min(2, len(_mats))
-                    song_cursor = 0
-                    game_state  = GameState.SONG_SELECT
+                    # UP/DOWN arrows cycle between 1P and 2P
+                    if event.button in (MAT_UP, MAT_DOWN):
+                        n_players = 2 if n_players == 1 else 1
+                    # SELECT or START confirms and goes to song select
+                    elif event.button in (MAT_SELECT, MAT_START, MAT_LEFT):
+                        song_cursor = 0
+                        game_state  = GameState.SONG_SELECT
             continue
 
         # ── SONG SELECT ───────────────────────────────────────────────────────
@@ -1744,6 +1749,8 @@ def main():
                         song_cursor = (song_cursor - 1) % len(SONGS)
                     elif event.button == MAT_DOWN:
                         song_cursor = (song_cursor + 1) % len(SONGS)
+                    elif event.button in (MAT_SELECT, MAT_START):
+                        start_game(n_players, SONGS[song_cursor])
                     elif event.button == MAT_RIGHT:
                         start_game(n_players, SONGS[song_cursor])
                     elif event.button == MAT_LEFT:
@@ -1762,10 +1769,10 @@ def main():
                     elif event.key == pygame.K_r and last_song:
                         start_game(n_players, last_song)
                 elif event.type == pygame.JOYBUTTONDOWN:
-                    if event.button == MAT_RIGHT and last_song:
-                        start_game(n_players, last_song)   # right = play again
+                    if event.button in (MAT_SELECT, MAT_START, MAT_RIGHT) and last_song:
+                        start_game(n_players, last_song)   # SELECT/START/RIGHT = play again
                     elif event.button == MAT_LEFT:
-                        stop_game()                         # left = back to menu
+                        stop_game()                         # LEFT = back to menu
             continue
 
         # ── PLAYING ───────────────────────────────────────────────────────────
