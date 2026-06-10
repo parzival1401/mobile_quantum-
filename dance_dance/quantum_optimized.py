@@ -1293,7 +1293,7 @@ def draw_menu():
                   F_MENUSM, sub_col)
     screen.blit(sub, (SW // 2 - sub.get_width() // 2, SH // 2 - 130))
 
-    # ── Buttons — pre-baked glow ──────────────────────────────────────────────
+    # ── Buttons — highlight selected player count ─────────────────────────────
     btn_w, btn_h = 300, 64
     gap  = 22
     bx   = SW // 2 - btn_w // 2
@@ -1302,25 +1302,33 @@ def draw_menu():
     mx, my = pygame.mouse.get_pos()
     pulse = 0.7 + 0.3 * math.sin(t * 0.10)
 
-    for by, label, key_hint, base_col in [
+    for idx, (by, label, key_hint, base_col) in enumerate([
         (by1, "1  PLAYER",  "PRESS  1", (0, 180, 255)),
         (by2, "2  PLAYERS", "PRESS  2", (255, 80, 200)),
-    ]:
-        rect  = pygame.Rect(bx, by, btn_w, btn_h)
-        hover = rect.collidepoint(mx, my)
-        r, g, b = base_col
-        bcol  = (int(r * pulse), int(g * pulse), int(b * pulse))
+    ]):
+        rect     = pygame.Rect(bx, by, btn_w, btn_h)
+        hover    = rect.collidepoint(mx, my)
+        selected = (idx + 1) == n_players   # highlight currently selected mode
+        active   = selected or hover
+        r, g, b  = base_col
+        bcol     = (int(r * pulse), int(g * pulse), int(b * pulse))
 
-        # Pre-baked glow — single blit with set_alpha
         glow = _get_btn_glow(btn_w, btn_h, base_col)
-        glow.set_alpha(int(220 * pulse) if hover else int(100 * pulse))
+        glow.set_alpha(int(240 * pulse) if active else int(60 * pulse))
         screen.blit(glow, (bx - 18, by - 18))
 
-        fill = (int(r*0.18), int(g*0.18), int(b*0.18))
-        pygame.draw.rect(screen, fill,  rect, border_radius=8)
-        pygame.draw.rect(screen, bcol,  rect, 2, border_radius=8)
+        fill = (int(r*0.35), int(g*0.35), int(b*0.35)) if selected else (int(r*0.12), int(g*0.12), int(b*0.12))
+        border_w = 3 if selected else 2
+        pygame.draw.rect(screen, fill, rect, border_radius=8)
+        pygame.draw.rect(screen, bcol, rect, border_w, border_radius=8)
 
-        lbl  = _tcache(('btn_lbl', label, hover), label, F_MENU, WHITE if hover else bcol)
+        # Arrow indicator on selected row
+        if selected:
+            arrow = _tcache(('menu_sel_arrow', idx), "►", F_MENU, WHITE)
+            screen.blit(arrow, (bx - arrow.get_width() - 10,
+                                rect.centery - arrow.get_height() // 2))
+
+        lbl  = _tcache(('btn_lbl', label, active), label, F_MENU, WHITE if active else bcol)
         hint = _tcache(('btn_hint', key_hint), key_hint, F_XSM, (120, 110, 160))
         screen.blit(lbl,  (rect.centerx - lbl.get_width() // 2,
                            rect.centery - lbl.get_height() // 2))
@@ -1750,6 +1758,12 @@ def main():
                 elif event.type == pygame.KEYDOWN:
                     if event.key == pygame.K_ESCAPE:
                         pygame.quit(); sys.exit()
+                    elif event.key in (pygame.K_UP, pygame.K_DOWN,
+                                       pygame.K_LEFT, pygame.K_RIGHT):
+                        n_players = 2 if n_players == 1 else 1
+                    elif event.key in (pygame.K_RETURN, pygame.K_SPACE):
+                        song_cursor = 0
+                        game_state  = GameState.SONG_SELECT
                     elif event.key == pygame.K_1:
                         n_players   = 1
                         song_cursor = 0
@@ -1768,14 +1782,14 @@ def main():
                         song_cursor = 0
                         game_state  = GameState.SONG_SELECT
                 elif event.type == pygame.JOYBUTTONDOWN:
-                    # UP/DOWN navigate between 1P and 2P
-                    if event.button in (MAT_UP, MAT_DOWN):
+                    # UP/DOWN (and LEFT/RIGHT) navigate between 1P and 2P
+                    if event.button in (MAT_UP, MAT_DOWN, MAT_LEFT, MAT_RIGHT):
                         n_players = 2 if n_players == 1 else 1
                     # START confirms — go to song select
                     elif event.button == MAT_START:
                         song_cursor = 0
                         game_state  = GameState.SONG_SELECT
-                    # SELECT on main menu does nothing (no exit)
+                    # SELECT does nothing on main menu
             continue
 
         # ── SONG SELECT ───────────────────────────────────────────────────────
@@ -1860,6 +1874,10 @@ def main():
                             p2.handle_key(i)
 
             elif event.type == pygame.JOYBUTTONDOWN:
+                # SELECT exits game back to menu from any player's mat
+                if event.button == MAT_SELECT:
+                    stop_game()
+                    break
                 key = (event.joy, event.button)
                 if tick - _mat_last.get(key, -_MAT_DEBOUNCE) >= _MAT_DEBOUNCE:
                     _mat_last[key] = tick
