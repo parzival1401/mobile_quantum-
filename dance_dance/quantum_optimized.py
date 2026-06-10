@@ -81,6 +81,17 @@ pygame.mixer.pre_init(frequency=44100, size=-16, channels=2, buffer=2048)
 pygame.init()
 pygame.mixer.init()
 
+# Debug: log audio environment to file so we can check from SSH
+try:
+    import datetime
+    with open('/tmp/audio_debug.txt', 'w') as _dbg:
+        _dbg.write(f"time={datetime.datetime.now()}\n")
+        _dbg.write(f"SDL_AUDIODRIVER={_os.environ.get('SDL_AUDIODRIVER','NOT SET')}\n")
+        _dbg.write(f"AUDIODEV={_os.environ.get('AUDIODEV','NOT SET')}\n")
+        _dbg.write(f"mixer_init={pygame.mixer.get_init()}\n")
+except Exception:
+    pass
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Sound effects (procedurally generated — no audio files needed)
@@ -1554,8 +1565,19 @@ def start_game(num_players: int, song: dict):
             pygame.mixer.music.set_volume(1.0)
             pygame.mixer.music.load(SONG_FILE)
             pygame.mixer.music.play()
+            try:
+                with open('/tmp/audio_debug.txt', 'a') as _dbg:
+                    _dbg.write(f"music_load={SONG_FILE}\n")
+                    _dbg.write(f"music_busy={pygame.mixer.music.get_busy()}\n")
+            except Exception:
+                pass
         except Exception as e:
             print(f"[WARNING] Could not load music: {e}")
+            try:
+                with open('/tmp/audio_debug.txt', 'a') as _dbg:
+                    _dbg.write(f"music_error={e}\n")
+            except Exception:
+                pass
 
 
 def stop_game():
