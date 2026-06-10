@@ -68,9 +68,11 @@ import numpy as np
 from enum import Enum, auto
 
 # Audio env vars MUST be set before pygame.init() so SDL2 picks them up.
+# Force them unconditionally — labwc autostart does not reliably pass
+# shell env vars into child processes on this Pi setup.
 # plug:both_hdmi routes to both HDMI screens via /etc/asound.conf on Pi.
-_os.environ.setdefault("SDL_AUDIODRIVER", "alsa")
-_os.environ.setdefault("AUDIODEV",        "plug:both_hdmi")
+_os.environ["SDL_AUDIODRIVER"] = "alsa"
+_os.environ["AUDIODEV"]        = "plug:both_hdmi"
 
 pygame.init()
 pygame.mixer.init(frequency=44100, size=-16, channels=2, buffer=512)
