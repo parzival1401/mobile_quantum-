@@ -1804,9 +1804,9 @@ def main():
                     if event.key == pygame.K_ESCAPE:
                         game_state = GameState.MENU
                     elif event.key == pygame.K_UP:
-                        song_cursor = (song_cursor - 1) % len(SONGS)
-                    elif event.key == pygame.K_DOWN:
                         song_cursor = (song_cursor + 1) % len(SONGS)
+                    elif event.key == pygame.K_DOWN:
+                        song_cursor = (song_cursor - 1) % len(SONGS)
                     elif event.key == pygame.K_RETURN:
                         start_game(n_players, SONGS[song_cursor])
                     else:
@@ -1821,9 +1821,9 @@ def main():
                             start_game(n_players, SONGS[song_cursor])
                 elif event.type == pygame.JOYBUTTONDOWN:
                     if event.button == MAT_UP:
-                        song_cursor = (song_cursor - 1) % len(SONGS)
-                    elif event.button == MAT_DOWN:
                         song_cursor = (song_cursor + 1) % len(SONGS)
+                    elif event.button == MAT_DOWN:
+                        song_cursor = (song_cursor - 1) % len(SONGS)
                     elif event.button == MAT_START:
                         start_game(n_players, SONGS[song_cursor])
                     elif event.button == MAT_SELECT:
