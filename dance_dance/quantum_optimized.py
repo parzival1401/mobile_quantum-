@@ -40,7 +40,7 @@ SONG_OFFSET   = 0.0
 SONG_DURATION = 120.0   # seconds — set per song at start_game
 _active_beats_fall = float(BEATS_TO_FALL)
 
-FADE_START  = 10.0   # seconds before end to begin fade-out
+FADE_START  = 10.0   # seconds before end to begin fade-out                               
 
 # ─────────────────────────────────────────────────────────────────────────────
 # SERIAL PORT HOOK  (hardware potentiometer → BIAS slider)
@@ -342,7 +342,7 @@ SONGS = [
      "bpm": 90,  "offset": 0.0, "difficulty": "Easy",    "duration": 120},
     {"title": "Alone",                  "artist": "Alan Walker",
      "file": "music/Alan Walker - Alone.mp3",
-     "bpm": 150, "offset": 3.0, "difficulty": "Hard",    "duration":  90},
+     "bpm": 150, "offset": 3.0, "difficulty": "Extreme", "duration":  90},
     {"title": "Bad Guy",                "artist": "Billie Eilish",
      "file": "music/Billie Eilish - bad guy (Lyrics).mp3",
      "bpm": 135, "offset": 0.0, "difficulty": "Hard",    "duration": 100},
@@ -354,7 +354,7 @@ SONGS = [
      "bpm": 113, "offset": 0.0, "difficulty": "Easy",    "duration": 120},
     {"title": "Party Rock Anthem",      "artist": "LMFAO",
      "file": "music/LMFAO - Party Rock Anthem (Lyrics) ft. Lauren Bennett, GoonRock.mp3",
-     "bpm": 130, "offset": 0.0, "difficulty": "Extreme", "duration":  90},
+     "bpm": 130, "offset": 0.0, "difficulty": "Hard",    "duration":  90},
 ]
 
 DIFF_SPEED = {"Easy": 1.0, "Hard": 1.5, "Extreme": 2.0}
