@@ -59,6 +59,7 @@ FADE_START  = 10.0   # seconds before end to begin fade-out
 # threading.Thread(target=_serial_reader, daemon=True).start()
 # ─────────────────────────────────────────────────────────────────────────────
 
+import os as _os
 import pygame
 import sys
 import random
@@ -66,13 +67,12 @@ import math
 import numpy as np
 from enum import Enum, auto
 
-pygame.init()
-# Force SDL2 to use ALSA with the plug:both_hdmi device defined in
-# /etc/asound.conf — routes audio to both HDMI screens simultaneously.
-# Must be set BEFORE mixer init. Falls back silently on Mac/desktop.
-import os as _os
+# Audio env vars MUST be set before pygame.init() so SDL2 picks them up.
+# plug:both_hdmi routes to both HDMI screens via /etc/asound.conf on Pi.
 _os.environ.setdefault("SDL_AUDIODRIVER", "alsa")
 _os.environ.setdefault("AUDIODEV",        "plug:both_hdmi")
+
+pygame.init()
 pygame.mixer.init(frequency=44100, size=-16, channels=2, buffer=512)
 
 
