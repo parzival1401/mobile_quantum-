@@ -67,10 +67,9 @@ import numpy as np
 from enum import Enum, auto
 
 pygame.init()
-# Force HDMI audio output (card 1 = vc4-hdmi-0 on Raspberry Pi)
-import os as _os
-_os.environ.setdefault("SDL_AUDIODEV", "hw:1,0")
-_os.environ.setdefault("AUDIODEV",     "hw:1,0")
+# Audio: use ALSA default device which routes to both HDMI outputs via
+# the "both_hdmi" multi-sink defined in /etc/asound.conf on the Pi.
+# Falls back silently on Mac/desktop where that config doesn't exist.
 pygame.mixer.init(frequency=44100, size=-16, channels=2, buffer=512)
 
 
