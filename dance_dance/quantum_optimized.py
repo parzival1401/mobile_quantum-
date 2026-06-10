@@ -175,6 +175,37 @@ def _play(sfx):
         except Exception: pass
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Song preview (plays a short fragment while browsing the song list)
+# ─────────────────────────────────────────────────────────────────────────────
+PREVIEW_START_S  = 30.0   # seconds into the song to start the preview
+PREVIEW_VOLUME   = 0.55   # quieter than full playback
+_preview_idx     = -1     # which SONGS index is currently previewed (-1 = none)
+
+def _start_preview(song: dict, idx: int):
+    """Load `song` into the streaming player and play a fragment from ~30s in."""
+    global _preview_idx
+    if idx == _preview_idx:
+        return                      # already previewing this one
+    _preview_idx = idx
+    try:
+        pygame.mixer.music.stop()
+        pygame.mixer.music.load(song["file"])
+        pygame.mixer.music.set_volume(PREVIEW_VOLUME)
+        # play(start=...) seeks into the track (works for mp3/ogg)
+        try:
+            pygame.mixer.music.play(start=PREVIEW_START_S)
+        except Exception:
+            pygame.mixer.music.play()   # fallback: from the beginning
+    except Exception as e:
+        print(f"[INFO] Preview failed for {song.get('title')}: {e}")
+
+def _stop_preview():
+    global _preview_idx
+    _preview_idx = -1
+    try: pygame.mixer.music.stop()
+    except Exception: pass
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Screen & timing
 # ─────────────────────────────────────────────────────────────────────────────
 SW, SH    = 768, 1024
@@ -1854,6 +1885,12 @@ def main():
 
         # ── SONG SELECT ───────────────────────────────────────────────────────
         if game_state == GameState.SONG_SELECT:
+            # Preview the highlighted song (loops back if the fragment ends)
+            if _menu_music_ch:
+                _menu_music_ch.stop()        # silence the menu jingle while previewing
+            if _preview_idx != song_cursor or not pygame.mixer.music.get_busy():
+                _start_preview(SONGS[song_cursor], song_cursor)
+
             song_rects = draw_song_select(song_cursor, n_players)
             _present_logo()
 
@@ -1862,22 +1899,26 @@ def main():
                     pygame.quit(); sys.exit()
                 elif event.type == pygame.KEYDOWN:
                     if event.key == pygame.K_ESCAPE:
+                        _stop_preview()
                         game_state = GameState.MENU
                     elif event.key == pygame.K_UP:
                         song_cursor = (song_cursor + 1) % len(SONGS)
                     elif event.key == pygame.K_DOWN:
                         song_cursor = (song_cursor - 1) % len(SONGS)
                     elif event.key == pygame.K_RETURN:
+                        _stop_preview()
                         start_game(n_players, SONGS[song_cursor])
                     else:
                         for idx in range(len(SONGS)):
                             if event.key == getattr(pygame, f"K_{idx + 1}", None):
                                 song_cursor = idx
+                                _stop_preview()
                                 start_game(n_players, SONGS[song_cursor])
                 elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                     for idx, rect in enumerate(song_rects):
                         if rect.collidepoint(event.pos):
                             song_cursor = idx
+                            _stop_preview()
                             start_game(n_players, SONGS[song_cursor])
                 elif event.type == pygame.JOYBUTTONDOWN:
                     if event.button == MAT_UP:
@@ -1888,11 +1929,11 @@ def main():
                         _play(SFX_NAV)
                     elif event.button == MAT_START:
                         _play(SFX_CONFIRM)
-                        if _menu_music_ch: _menu_music_ch.stop()
+                        _stop_preview()
                         start_game(n_players, SONGS[song_cursor])
                     elif event.button == MAT_SELECT:
                         _play(SFX_NAV)
-                        if _menu_music_ch: _menu_music_ch.stop()
+                        _stop_preview()
                         game_state = GameState.MENU
             continue
 
