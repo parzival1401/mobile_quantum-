@@ -107,18 +107,70 @@ def _make_tone(freq, duration_ms, vol=0.22, fade_ms=40):
     arr  = (wave * 32767).astype(np.int16)
     return pygame.sndarray.make_sound(np.column_stack([arr, arr]))
 
+def _make_chord(freqs, duration_ms, vol=0.18, fade_ms=60):
+    """Mix multiple sine waves for a richer arcade chord."""
+    sr  = 44100
+    n   = int(sr * duration_ms / 1000)
+    t   = np.linspace(0, duration_ms / 1000, n, False)
+    wave = sum(np.sin(2 * np.pi * f * t) for f in freqs) * (vol / len(freqs))
+    fade = max(1, int(sr * fade_ms / 1000))
+    wave[-fade:] *= np.linspace(1, 0, fade)
+    arr = (wave * 32767).astype(np.int16)
+    return pygame.sndarray.make_sound(np.column_stack([arr, arr]))
+
+def _make_menu_music(bpm=140, bars=4, vol=0.18):
+    """Generate a looping 8-bit style arcade jingle."""
+    sr       = 44100
+    beat_s   = 60.0 / bpm
+    bar_s    = beat_s * 4
+    total_s  = bar_s * bars
+    n        = int(sr * total_s)
+    t        = np.linspace(0, total_s, n, False)
+    wave     = np.zeros(n)
+    # Simple 8-bit melody — square-ish wave via harmonics
+    melody = [  # (start_beat, duration_beats, freq)
+        (0,0.5,523),(0.5,0.5,659),(1,0.5,784),(1.5,0.5,1047),
+        (2,0.5,880),(2.5,0.5,784),(3,1.0,659),
+        (4,0.5,523),(4.5,0.5,440),(5,0.5,523),(5.5,0.5,659),
+        (6,0.5,784),(6.5,0.5,880),(7,1.0,1047),
+        (8,0.5,784),(8.5,0.5,659),(9,0.5,523),(9.5,0.5,440),
+        (10,0.5,392),(10.5,0.5,440),(11,1.0,523),
+        (12,0.5,659),(12.5,0.5,784),(13,0.5,880),(13.5,0.5,784),
+        (14,0.5,659),(14.5,0.5,523),(15,1.0,440),
+    ]
+    for start_beat, dur_beats, freq in melody:
+        i0 = int(start_beat * beat_s * sr)
+        i1 = min(n, int((start_beat + dur_beats * 0.85) * beat_s * sr))
+        if i0 >= n: continue
+        seg_t = t[i0:i1] - t[i0]
+        # Square-ish: fundamental + 3rd harmonic
+        seg = (np.sin(2*np.pi*freq*seg_t) + 0.3*np.sin(2*np.pi*freq*3*seg_t)) * vol
+        fade = max(1, int(sr * 0.02))
+        seg[-fade:] *= np.linspace(1, 0, fade)
+        wave[i0:i1] += seg
+    wave = np.clip(wave, -1, 1)
+    arr  = (wave * 32767).astype(np.int16)
+    return pygame.sndarray.make_sound(np.column_stack([arr, arr]))
+
 try:
-    SFX_PERFECT   = _make_tone(880,  70)
-    SFX_GOOD      = _make_tone(660,  70)
-    SFX_MISS      = _make_tone(150, 110)
-    SFX_COLLAPSE  = _make_tone(440, 140)
-    SFX_MILESTONE = _make_tone(1047, 180)
+    # Hit SFX — PERFECT and GOOD removed (interfere with music)
+    # Keep miss (low freq, doesn't clash) and collapse/milestone
+    SFX_PERFECT   = None   # silenced — visual feedback only
+    SFX_GOOD      = None   # silenced — visual feedback only
+    SFX_MISS      = _make_tone(180, 90, vol=0.15)
+    SFX_COLLAPSE  = _make_chord([220, 277, 330], 160, vol=0.16)
+    SFX_MILESTONE = _make_chord([523, 659, 784, 1047], 220, vol=0.18)
+    SFX_NAV       = _make_tone(660, 40, vol=0.12)    # menu navigation beep
+    SFX_CONFIRM   = _make_chord([523, 659, 784], 120, vol=0.15)  # menu confirm
+    SFX_MENU_MUSIC = _make_menu_music()
     _sfx_ok = True
 except Exception:
+    SFX_PERFECT = SFX_GOOD = SFX_MISS = SFX_COLLAPSE = None
+    SFX_MILESTONE = SFX_NAV = SFX_CONFIRM = SFX_MENU_MUSIC = None
     _sfx_ok = False
 
 def _play(sfx):
-    if _sfx_ok:
+    if _sfx_ok and sfx is not None:
         try: sfx.play()
         except Exception: pass
 
@@ -959,12 +1011,10 @@ class PlayerState:
                 self.score += 300 * max(1, self.combo // 5)
                 self.perfect_count += 1
                 self.floats.append(FloatText("PERFECT!", scx, TARGET_Y - 42, GOLD, F_MED))
-                _play(SFX_PERFECT)
             else:
                 self.score += 100 * max(1, self.combo // 10)
                 self.good_count += 1
                 self.floats.append(FloatText("GOOD", scx, TARGET_Y - 42, WHITE))
-                _play(SFX_GOOD)
             for m in COMBO_MILESTONES:
                 if self.combo >= m and self.last_milestone < m:
                     self.last_milestone  = m
@@ -1590,6 +1640,9 @@ def start_game(num_players: int, song: dict):
     speed_mult         = DIFF_SPEED[song["difficulty"]]
     _active_beats_fall = max(2.0, BEATS_TO_FALL / speed_mult)
 
+    # Stop menu music (channel 14 reserved; stop all non-music channels)
+    pygame.mixer.stop()   # stops all channels so menu jingle doesn't overlap song
+
     q_collapsed    = 0
     q_total        = 0
     tick           = 0
@@ -1745,11 +1798,17 @@ def main():
     # Open logo window on second monitor immediately at startup
     _open_logo_window()
 
+    _menu_music_ch = None   # channel playing menu music loop
+
     while True:
         dt = min(clk.tick(30 if _LOW_PERF else FPS) / 1000.0, 0.05)
 
         # ── MENU ──────────────────────────────────────────────────────────────
         if game_state == GameState.MENU:
+            # Start menu music loop if not already playing
+            if _sfx_ok and SFX_MENU_MUSIC and (
+                    _menu_music_ch is None or not _menu_music_ch.get_busy()):
+                _menu_music_ch = SFX_MENU_MUSIC.play(-1)  # -1 = loop forever
             btn1_rect, btn2_rect = draw_menu()
             _present_logo()
 
@@ -1783,14 +1842,14 @@ def main():
                         song_cursor = 0
                         game_state  = GameState.SONG_SELECT
                 elif event.type == pygame.JOYBUTTONDOWN:
-                    # UP/DOWN (and LEFT/RIGHT) navigate between 1P and 2P
                     if event.button in (MAT_UP, MAT_DOWN, MAT_LEFT, MAT_RIGHT):
                         n_players = 2 if n_players == 1 else 1
-                    # START confirms — go to song select
+                        _play(SFX_NAV)
                     elif event.button == MAT_START:
+                        _play(SFX_CONFIRM)
+                        if _menu_music_ch: _menu_music_ch.stop()
                         song_cursor = 0
                         game_state  = GameState.SONG_SELECT
-                    # SELECT does nothing on main menu
             continue
 
         # ── SONG SELECT ───────────────────────────────────────────────────────
@@ -1823,11 +1882,17 @@ def main():
                 elif event.type == pygame.JOYBUTTONDOWN:
                     if event.button == MAT_UP:
                         song_cursor = (song_cursor + 1) % len(SONGS)
+                        _play(SFX_NAV)
                     elif event.button == MAT_DOWN:
                         song_cursor = (song_cursor - 1) % len(SONGS)
+                        _play(SFX_NAV)
                     elif event.button == MAT_START:
+                        _play(SFX_CONFIRM)
+                        if _menu_music_ch: _menu_music_ch.stop()
                         start_game(n_players, SONGS[song_cursor])
                     elif event.button == MAT_SELECT:
+                        _play(SFX_NAV)
+                        if _menu_music_ch: _menu_music_ch.stop()
                         game_state = GameState.MENU
             continue
 
