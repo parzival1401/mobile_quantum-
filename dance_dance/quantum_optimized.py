@@ -210,12 +210,21 @@ def _open_logo_window():
                                for m in re.finditer(r'Position:\s*(\d+),\d+', out)))
         if len(positions) < 2:
             return
-        p2_x = positions[1]
+        p1_x = positions[0]   # leftmost = main/P1 screen
+        p2_x = positions[1]   # rightmost = logo/P2 screen
         from pygame._sdl2.video import Window, Renderer
+        # Explicitly place the main pygame window on the left screen
+        try:
+            _main = Window.from_display_module()
+            _main.position = (p1_x, 0)
+        except Exception:
+            pass
+        # Open logo window on the right screen
         _win_logo  = Window("Quantum Dance", size=(SW, SH))
         _win_logo.position = (p2_x, 0)
         _ren_logo  = Renderer(_win_logo)
         _surf_logo = pygame.Surface((SW, SH))
+        print(f"[INFO] Logo window opened at x={p2_x}, main at x={p1_x}")
     except Exception as e:
         print(f"[INFO] Logo window not opened: {e}")
 
