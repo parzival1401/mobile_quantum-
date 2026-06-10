@@ -404,7 +404,12 @@ MAT_UP     = 3   # BTN_TOP      code 291
 MAT_SELECT = 8   # BTN_BASE3    code 296
 MAT_START  = 9   # BTN_BASE4    code 297  (mat2 canonical START)
 # MAT button → lane index (left=0 down=1 up=2 right=3)
-_MAT_BTN_TO_LANE = {MAT_LEFT: 0, MAT_DOWN: 1, MAT_UP: 2, MAT_RIGHT: 3}
+# Corrected for physical mat rotation — mat is rotated 90° relative to screen:
+#   physical UP    → lane 0 (← left arrow)
+#   physical LEFT  → lane 1 (↓ down arrow)
+#   physical RIGHT → lane 2 (↑ up arrow)
+#   physical DOWN  → lane 3 (→ right arrow)
+_MAT_BTN_TO_LANE = {MAT_UP: 0, MAT_LEFT: 1, MAT_RIGHT: 2, MAT_DOWN: 3}
 
 # Debounce: track last-press tick per (joy_id, button)
 _mat_last: dict = {}
