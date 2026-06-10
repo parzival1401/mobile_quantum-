@@ -72,7 +72,7 @@ from enum import Enum, auto
 # shell env vars into child processes on this Pi setup.
 # plug:both_hdmi routes to both HDMI screens via /etc/asound.conf on Pi.
 _os.environ["SDL_AUDIODRIVER"] = "alsa"
-_os.environ["AUDIODEV"]        = "plug:both_hdmi"
+_os.environ["AUDIODEV"]        = "default"
 
 # pre_init reserves the audio device BEFORE pygame.init() opens it,
 # so both mixer channels and mixer.music share the same single device handle.
@@ -1548,18 +1548,22 @@ def start_game(num_players: int, song: dict):
     p1 = PlayerState(0, KEYS_P1, ctx1)
     p2 = PlayerState(1, KEYS_P2, ctx2) if num_players == 2 else None
 
-    # Music — loaded as Sound on dedicated channel to avoid ALSA device conflict
+    # Music
     if SONG_FILE:
-        _music_set_volume(1.0)
-        _music_load(SONG_FILE)
-        _music_play()
+        try:
+            pygame.mixer.music.set_volume(1.0)
+            pygame.mixer.music.load(SONG_FILE)
+            pygame.mixer.music.play()
+        except Exception as e:
+            print(f"[WARNING] Could not load music: {e}")
 
 
 def stop_game():
     global game_state, win2, ren2, surf2, SONG_FILE
     global two_screen_mode, split_mode, ctx1, ctx2
     game_state = GameState.MENU
-    _music_stop()
+    try: pygame.mixer.music.stop()
+    except Exception: pass
     SONG_FILE = None
     if win2 is not None:
         try: win2.destroy()
@@ -1777,8 +1781,8 @@ def main():
                         elif p2 and event.joy == 1:
                             p2.handle_key(lane)
 
-        music_playing  = SONG_FILE and _music_get_busy()
-        music_pos_ms   = _music_get_pos() if music_playing else -1
+        music_playing  = SONG_FILE and pygame.mixer.music.get_busy()
+        music_pos_ms   = pygame.mixer.music.get_pos() if music_playing else -1
 
         update(dt, music_pos_ms)
         for nid in collapsed_outcomes:
@@ -1791,18 +1795,22 @@ def main():
             elapsed_sec = max(0.0, music_pos_ms / 1000.0 - SONG_OFFSET)
             time_left   = SONG_DURATION - elapsed_sec
             if time_left <= 0:
-                _music_stop()
+                try: pygame.mixer.music.stop()
+                except Exception: pass
             elif time_left <= FADE_START:
-                _music_set_volume(max(0.0, time_left / FADE_START))
+                vol = max(0.0, time_left / FADE_START)
+                try: pygame.mixer.music.set_volume(vol)
+                except Exception: pass
 
         # ── Transition to RESULTS ─────────────────────────────────────────────
         if music_playing:
-            song_done = not _music_get_busy()
+            song_done = not pygame.mixer.music.get_busy()
         else:
             song_done = SONG_FILE is not None and _game_elapsed >= SONG_DURATION
 
         if song_done and not p1.notes and (p2 is None or not p2.notes):
-            _music_set_volume(1.0)
+            try: pygame.mixer.music.set_volume(1.0)
+            except Exception: pass
             game_state = GameState.RESULTS
 
         # ── Render ────────────────────────────────────────────────────────────
