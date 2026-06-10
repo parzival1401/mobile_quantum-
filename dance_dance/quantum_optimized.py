@@ -409,7 +409,7 @@ MAT_START  = 9   # BTN_BASE4    code 297  (mat2 canonical START)
 #   physical LEFT  → lane 1 (↓ down arrow)
 #   physical RIGHT → lane 2 (↑ up arrow)
 #   physical DOWN  → lane 3 (→ right arrow)
-_MAT_BTN_TO_LANE = {MAT_UP: 0, MAT_LEFT: 1, MAT_RIGHT: 2, MAT_DOWN: 3}
+_MAT_BTN_TO_LANE = {MAT_DOWN: 0, MAT_RIGHT: 1, MAT_LEFT: 2, MAT_UP: 3}
 
 # Debounce: track last-press tick per (joy_id, button)
 _mat_last: dict = {}
