@@ -67,9 +67,12 @@ import numpy as np
 from enum import Enum, auto
 
 pygame.init()
-# Audio: use ALSA default device which routes to both HDMI outputs via
-# the "both_hdmi" multi-sink defined in /etc/asound.conf on the Pi.
-# Falls back silently on Mac/desktop where that config doesn't exist.
+# Force SDL2 to use ALSA with the plug:both_hdmi device defined in
+# /etc/asound.conf — routes audio to both HDMI screens simultaneously.
+# Must be set BEFORE mixer init. Falls back silently on Mac/desktop.
+import os as _os
+_os.environ.setdefault("SDL_AUDIODRIVER", "alsa")
+_os.environ.setdefault("AUDIODEV",        "plug:both_hdmi")
 pygame.mixer.init(frequency=44100, size=-16, channels=2, buffer=512)
 
 
