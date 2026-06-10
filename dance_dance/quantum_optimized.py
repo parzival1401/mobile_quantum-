@@ -195,6 +195,75 @@ n_players     = 1
 song_cursor   = 0      # highlighted row in song select screen
 last_song     = None   # dict of the last played song (for retry)
 
+# ── Permanent second window (logo screen until 2P game starts) ────────────────
+_win_logo  = None   # SDL2 Window on the second monitor
+_ren_logo  = None   # Renderer for that window
+_surf_logo = None   # Surface we draw onto
+
+def _open_logo_window():
+    """Open the second monitor window showing the logo. Called once at startup."""
+    global _win_logo, _ren_logo, _surf_logo
+    try:
+        import subprocess, re
+        out = subprocess.check_output(["wlr-randr"], stderr=subprocess.DEVNULL).decode()
+        positions = sorted(set(int(m.group(1))
+                               for m in re.finditer(r'Position:\s*(\d+),\d+', out)))
+        if len(positions) < 2:
+            return
+        p2_x = positions[1]
+        from pygame._sdl2.video import Window, Renderer
+        _win_logo  = Window("Quantum Dance", size=(SW, SH))
+        _win_logo.position = (p2_x, 0)
+        _ren_logo  = Renderer(_win_logo)
+        _surf_logo = pygame.Surface((SW, SH))
+    except Exception as e:
+        print(f"[INFO] Logo window not opened: {e}")
+
+def _close_logo_window():
+    global _win_logo, _ren_logo, _surf_logo
+    if _win_logo:
+        try: _win_logo.destroy()
+        except Exception: pass
+    _win_logo = _ren_logo = _surf_logo = None
+
+def _draw_logo_screen(surf):
+    """Black screen with centred QUANTUM DANCE title — shown on second monitor."""
+    t = pygame.time.get_ticks() // 33   # ~30fps tick counter
+    surf.fill((4, 2, 14))
+    title_str = "QUANTUM DANCE"
+    tx = SW // 2 - sum(F_BIG.size(ch)[0] for ch in title_str) // 2
+    ty = SH // 2 - F_BIG.get_height() // 2
+    for i, ch in enumerate(title_str):
+        hue = (t * 2 + i * 18) % 360
+        h   = hue / 60.0
+        xv  = int(255 * (1 - abs(h % 2 - 1)))
+        if   h < 1: r, g, b = 255,  xv,   0
+        elif h < 2: r, g, b =  xv, 255,   0
+        elif h < 3: r, g, b =   0, 255,  xv
+        elif h < 4: r, g, b =   0,  xv, 255
+        elif h < 5: r, g, b =  xv,   0, 255
+        else:       r, g, b = 255,   0,  xv
+        cs = _rainbow_char(ch, r, g, b, F_BIG)
+        surf.blit(cs, (tx, ty))
+        tx += cs.get_width()
+    sub = _tcache('logo_sub', "Quantum Exhibition", F_MENUSM, (140, 100, 200))
+    surf.blit(sub, (SW // 2 - sub.get_width() // 2, ty + F_BIG.get_height() + 20))
+
+def _present_logo():
+    """Blit the logo surface to the second window."""
+    if not (_win_logo and _ren_logo and _surf_logo):
+        return
+    try:
+        from pygame._sdl2.video import Texture
+        _draw_logo_screen(_surf_logo)
+        tex = Texture.from_surface(_ren_logo, _surf_logo)
+        _ren_logo.clear()
+        tex.draw()
+        _ren_logo.present()
+        tex.destroy()
+    except Exception:
+        pass
+
 # 2P window objects (created only when n_players == 2)
 win2  = None
 ren2  = None
@@ -1507,50 +1576,23 @@ def start_game(num_players: int, song: dict):
     _game_elapsed  = 0.0
     Note._nid      = 0
 
-    # Tear down any existing second window
-    if win2 is not None:
-        try: win2.destroy()
-        except Exception: pass
+    # Don't destroy win2 here — we reuse the logo window as P2 window for 2P
     win2 = ren2 = surf2 = None
     two_screen_mode = False
     split_mode      = False
 
     if num_players == 2:
-        mon_positions = _get_monitor_x_positions()
-
-        if len(mon_positions) >= 2:
-            # Option A — two physical monitors detected.
-            # P1 goes on leftmost monitor (positions[0]), P2 on next (positions[1]).
-            # Plug order doesn't matter — sorted by X so left=P1, right=P2.
-            p1_x = mon_positions[0]
-            p2_x = mon_positions[1]
-            try:
-                from pygame._sdl2.video import Window, Renderer
-                two_screen_mode = True
-                split_mode      = False
-                # Move the main P1 window to the leftmost monitor
-                pygame.display.get_wm_info()   # ensure window handle is ready
-                try:
-                    from pygame._sdl2.video import Window as _Win
-                    _main = _Win.from_display_module()
-                    _main.position = (p1_x, 0)
-                except Exception:
-                    pass
-                win2  = Window("Quantum Dance — Player 2", size=(SW, SH))
-                win2.position = (p2_x, 0)
-                ren2  = Renderer(win2)
-                surf2 = pygame.Surface((SW, SH))
-                ctx1  = make_ctx(SW)
-                ctx2  = make_ctx(SW)
-            except Exception as e:
-                print(f"[WARNING] Second monitor init failed, falling back to split: {e}")
-                two_screen_mode = False
-                win2 = ren2 = surf2 = None
-                split_mode = True
-                ctx1 = make_ctx(SW // 2)
-                ctx2 = make_ctx(SW // 2)
+        if _win_logo and _ren_logo and _surf_logo:
+            # Reuse the permanent logo window as the P2 gameplay window
+            two_screen_mode = True
+            split_mode      = False
+            win2  = _win_logo
+            ren2  = _ren_logo
+            surf2 = _surf_logo
+            ctx1  = make_ctx(SW)
+            ctx2  = make_ctx(SW)
         else:
-            # Option B — only one monitor detected, split 50/50
+            # No second monitor — split 50/50
             split_mode = True
             ctx1 = make_ctx(SW // 2)
             ctx2 = make_ctx(SW // 2)
@@ -1589,9 +1631,8 @@ def stop_game():
     try: pygame.mixer.music.stop()
     except Exception: pass
     SONG_FILE = None
-    if win2 is not None:
-        try: win2.destroy()
-        except Exception: pass
+    # Don't destroy win2 — it's the permanent logo window (_win_logo).
+    # Just clear the gameplay references so the logo resumes showing.
     win2 = ren2 = surf2 = None
     two_screen_mode = False
     split_mode      = False
@@ -1678,12 +1719,16 @@ def main():
     btn1_rect = btn2_rect = None
     song_rects: list = []
 
+    # Open logo window on second monitor immediately at startup
+    _open_logo_window()
+
     while True:
         dt = min(clk.tick(30 if _LOW_PERF else FPS) / 1000.0, 0.05)
 
         # ── MENU ──────────────────────────────────────────────────────────────
         if game_state == GameState.MENU:
             btn1_rect, btn2_rect = draw_menu()
+            _present_logo()
 
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
@@ -1721,6 +1766,7 @@ def main():
         # ── SONG SELECT ───────────────────────────────────────────────────────
         if game_state == GameState.SONG_SELECT:
             song_rects = draw_song_select(song_cursor, n_players)
+            _present_logo()
 
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
@@ -1760,6 +1806,7 @@ def main():
         # ── RESULTS ───────────────────────────────────────────────────────────
         if game_state == GameState.RESULTS:
             draw_results()
+            _present_logo()
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     pygame.quit(); sys.exit()
@@ -1854,7 +1901,7 @@ def main():
             pygame.display.flip()
 
         elif two_screen_mode and n_players == 2 and p2 and surf2 and ren2 and ctx1 and ctx2:
-            # Option A: separate SDL2 windows on two monitors
+            # Option A: 2P two-monitor — P1 on main, P2 on win2 (logo window replaced)
             _render_player(screen, p1, ctx1, "PLAYER 1")
             pygame.display.flip()
             try:
@@ -1869,10 +1916,11 @@ def main():
                 pass
 
         else:
-            # 1P or fallback
+            # 1P — render game on main screen, show logo on second screen
             lbl = "PLAYER 1" if n_players == 2 else ""
             _render_player(screen, p1, ctx1 or make_ctx(SW), lbl)
             pygame.display.flip()
+            _present_logo()
 
 
 if __name__ == "__main__":
