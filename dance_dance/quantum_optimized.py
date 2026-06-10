@@ -1768,13 +1768,14 @@ def main():
                         song_cursor = 0
                         game_state  = GameState.SONG_SELECT
                 elif event.type == pygame.JOYBUTTONDOWN:
-                    # UP/DOWN arrows cycle between 1P and 2P
+                    # UP/DOWN navigate between 1P and 2P
                     if event.button in (MAT_UP, MAT_DOWN):
                         n_players = 2 if n_players == 1 else 1
-                    # SELECT or START confirms and goes to song select
-                    elif event.button in (MAT_SELECT, MAT_START, MAT_LEFT):
+                    # START confirms — go to song select
+                    elif event.button == MAT_START:
                         song_cursor = 0
                         game_state  = GameState.SONG_SELECT
+                    # SELECT on main menu does nothing (no exit)
             continue
 
         # ── SONG SELECT ───────────────────────────────────────────────────────
@@ -1809,11 +1810,9 @@ def main():
                         song_cursor = (song_cursor - 1) % len(SONGS)
                     elif event.button == MAT_DOWN:
                         song_cursor = (song_cursor + 1) % len(SONGS)
-                    elif event.button in (MAT_SELECT, MAT_START):
+                    elif event.button == MAT_START:
                         start_game(n_players, SONGS[song_cursor])
-                    elif event.button == MAT_RIGHT:
-                        start_game(n_players, SONGS[song_cursor])
-                    elif event.button == MAT_LEFT:
+                    elif event.button == MAT_SELECT:
                         game_state = GameState.MENU
             continue
 
@@ -1830,10 +1829,10 @@ def main():
                     elif event.key == pygame.K_r and last_song:
                         start_game(n_players, last_song)
                 elif event.type == pygame.JOYBUTTONDOWN:
-                    if event.button in (MAT_SELECT, MAT_START, MAT_RIGHT) and last_song:
-                        start_game(n_players, last_song)   # SELECT/START/RIGHT = play again
-                    elif event.button == MAT_LEFT:
-                        stop_game()                         # LEFT = back to menu
+                    if event.button == MAT_START and last_song:
+                        start_game(n_players, last_song)   # START = play again
+                    elif event.button == MAT_SELECT:
+                        stop_game()                         # SELECT = back to menu
             continue
 
         # ── PLAYING ───────────────────────────────────────────────────────────
