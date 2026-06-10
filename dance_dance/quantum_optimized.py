@@ -105,7 +105,7 @@ def _play(sfx):
 # ─────────────────────────────────────────────────────────────────────────────
 # Screen & timing
 # ─────────────────────────────────────────────────────────────────────────────
-SW, SH    = 1080, 1920
+SW, SH    = 768, 1024
 FPS       = 60
 _LOW_PERF = True   # True = Raspberry Pi: skip stars/scanlines, cap 30 FPS
 
@@ -184,14 +184,14 @@ def _f(sz, bold=True):
             pass
     return pygame.font.Font(None, sz)
 
-F_TITLE  = _f(56)
-F_BIG    = _f(72)
-F_MENU   = _f(46)
-F_MENUSM = _f(30)
-F_MED    = _f(30)
-F_SM     = _f(22)
-F_XSM    = _f(17, bold=False)
-F_ARROW  = _f(44)
+F_TITLE  = _f(40)
+F_BIG    = _f(52)
+F_MENU   = _f(33)
+F_MENUSM = _f(22)
+F_MED    = _f(22)
+F_SM     = _f(16)
+F_XSM    = _f(12, bold=False)
+F_ARROW  = _f(32)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Song catalogue  (sourced from music/ddr_songs.txt)
@@ -234,23 +234,23 @@ COMBO_MILESTONES = [10, 25, 50, 100, 200]
 # Layout constants
 # ─────────────────────────────────────────────────────────────────────────────
 N_LANES  = 4
-LANE_W   = 240
-LANE_GAP = 16
-TOTAL_W  = N_LANES * LANE_W + (N_LANES - 1) * LANE_GAP   # 1008
-LX0      = (SW - TOTAL_W) // 2                            #   36 — side margins
+LANE_W   = 170
+LANE_GAP = 11
+TOTAL_W  = N_LANES * LANE_W + (N_LANES - 1) * LANE_GAP   # 713
+LX0      = (SW - TOTAL_W) // 2                            #   27 — side margins
 
-TOP_H    = 140
-BOT_H    = 140
+TOP_H    = 90
+BOT_H    = 90
 LANE_TOP = TOP_H
-LANE_BOT = SH - BOT_H        # 1780
+LANE_BOT = SH - BOT_H        # 934
 
-TARGET_Y   = LANE_BOT - 50
-HIT_ZONE_H = 90
-NOTE_W     = LANE_W - 20
-NOTE_H     = 80
+TARGET_Y   = LANE_BOT - 34
+HIT_ZONE_H = 60
+NOTE_W     = LANE_W - 14
+NOTE_H     = 54
 
-HIT_PERFECT = 34
-HIT_GOOD    = 70
+HIT_PERFECT = 22
+HIT_GOOD    = 46
 
 KEYS_P1 = [pygame.K_LEFT, pygame.K_DOWN, pygame.K_UP, pygame.K_RIGHT]
 KEYS_P2 = [pygame.K_a,    pygame.K_s,    pygame.K_w,  pygame.K_d]
