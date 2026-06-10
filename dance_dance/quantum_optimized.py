@@ -74,8 +74,12 @@ from enum import Enum, auto
 _os.environ["SDL_AUDIODRIVER"] = "alsa"
 _os.environ["AUDIODEV"]        = "plug:both_hdmi"
 
+# pre_init reserves the audio device BEFORE pygame.init() opens it,
+# so both mixer channels and mixer.music share the same single device handle.
+# This prevents the "device busy" error when music tries to open a second stream.
+pygame.mixer.pre_init(frequency=44100, size=-16, channels=2, buffer=2048)
 pygame.init()
-pygame.mixer.init(frequency=44100, size=-16, channels=2, buffer=512)
+pygame.mixer.init()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
