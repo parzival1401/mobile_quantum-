@@ -340,20 +340,24 @@ _entry_label    = ""       # "PLAYER 1" / "PLAYER 2" / "" for 1P
 _entry_score    = 0        # score being entered
 _leader_view_idx = 0       # which song's board is shown in LEADERBOARD state
 
+_entry_idx = 0   # player index (0/1) currently entering a name
+_just_entered = {0: None, 1: None}   # player_idx -> entered name (board highlight)
+
 def _begin_name_entry(queue: list):
-    """queue = list of (player_state, label) that qualified. Sets up the first."""
+    """queue = list of (player_state, label, player_idx) that qualified."""
     global _entry_queue, _entry_initials, _entry_pos, _entry_typed
-    global _entry_label, _entry_score, game_state
+    global _entry_label, _entry_score, _entry_idx, game_state
     _entry_queue = queue
     if not _entry_queue:
         game_state = GameState.RESULTS
         return
-    ps, label = _entry_queue[0]
+    ps, label, pidx = _entry_queue[0]
     _entry_initials = ["A", "A", "A"]
     _entry_pos      = 0
     _entry_typed    = ""
     _entry_label    = label
     _entry_score    = ps.score
+    _entry_idx      = pidx
     game_state = GameState.NAME_ENTRY
 
 def _commit_name_entry():
@@ -363,6 +367,7 @@ def _commit_name_entry():
     if not name:
         name = "---"
     _add_score(last_song["title"], name, _entry_score)
+    _just_entered[_entry_idx] = name           # remember for board highlight
     _entry_queue = _entry_queue[1:]
     if _entry_queue:
         _begin_name_entry(_entry_queue)   # set up next player
@@ -439,6 +444,22 @@ def _present_logo():
     try:
         from pygame._sdl2.video import Texture
         _draw_logo_screen(_surf_logo)
+        tex = Texture.from_surface(_ren_logo, _surf_logo)
+        _ren_logo.clear()
+        tex.draw()
+        _ren_logo.present()
+        tex.destroy()
+    except Exception:
+        pass
+
+def _present_second(draw_fn):
+    """Render to the second monitor via the persistent logo window.
+    draw_fn(surf) draws onto the window's surface. No-op if no 2nd window."""
+    if not (_win_logo and _ren_logo and _surf_logo):
+        return
+    try:
+        from pygame._sdl2.video import Texture
+        draw_fn(_surf_logo)
         tex = Texture.from_surface(_ren_logo, _surf_logo)
         _ren_logo.clear()
         tex.draw()
@@ -1742,36 +1763,36 @@ def _draw_results_panel(surf, ps: PlayerState, cx: int, cy: int, title: str):
         surf.blit(k, (bx + 32 - k.get_width() // 2, by + 26))
 
 
-def draw_results():
-    screen.fill(BG)
-
-    # Subtle star field behind results
-    # Pre-baked starfield positions (no random.Random each frame)
+def _draw_results_surface(surf, ps: PlayerState, label: str, hi_name=None):
+    """Render ONE player's results onto `surf` (centered, full screen)."""
+    surf.fill(BG)
     for sx, sy in _STARS_RESULTS:
-        pygame.draw.circle(screen, (40, 35, 65), (sx, sy), 1)
+        pygame.draw.circle(surf, (40, 35, 65), (sx, sy), 1)
 
     title = _tcache('res_title', "✦  GREAT GAME!  ✦", F_TITLE, Q_PURPLE)
-    screen.blit(title, (SW // 2 - title.get_width() // 2, 22))
+    surf.blit(title, (SW // 2 - title.get_width() // 2, 22))
 
     if last_song:
         song_lbl = _tcache('res_song',
             f"{last_song['title']}  —  {last_song['artist']}", F_MED, DIM)
-        screen.blit(song_lbl, (SW // 2 - song_lbl.get_width() // 2, 62))
+        surf.blit(song_lbl, (SW // 2 - song_lbl.get_width() // 2, 62))
 
-    if n_players == 2 and p2:
-        _draw_results_panel(screen, p1, SW // 4,     SH // 2 + 20, "PLAYER 1")
-        _draw_results_panel(screen, p2, SW * 3 // 4, SH // 2 + 20, "PLAYER 2")
-        pygame.draw.line(screen, (50, 40, 80), (SW // 2, 95), (SW // 2, SH - 55), 1)
-    else:
-        _draw_results_panel(screen, p1, SW // 2, SH // 2 + 20, "")
+    _draw_results_panel(surf, ps, SW // 2, SH // 2 - 30, label)
 
-    # Top-5 leaderboard for this song, along the bottom
     if last_song:
-        _draw_board_list(screen, last_song["title"], SW // 2, SH - 200, compact=True)
+        _draw_board_list(surf, last_song["title"], SW // 2, SH - 235,
+                         compact=True, highlight=hi_name)
 
     hint = _tcache('res_hint', "START / R  play again     SELECT / ESC  menu",
                    F_SM, (80, 70, 120))
-    screen.blit(hint, (SW // 2 - hint.get_width() // 2, SH - 40))
+    surf.blit(hint, (SW // 2 - hint.get_width() // 2, SH - 40))
+
+
+def draw_results():
+    """Main screen = Player 1 (or solo). In 2P, Player 2 is pushed to the
+    second monitor by the main loop via _present_second()."""
+    label = "PLAYER 1" if (n_players == 2 and p2) else ""
+    _draw_results_surface(screen, p1, label, _just_entered.get(0))
     pygame.display.flip()
 
 
@@ -1797,28 +1818,27 @@ def _draw_board_list(surf, song_title: str, cx: int, top_y: int,
         surf.blit(surf_line, (cx - surf_line.get_width() // 2, y + i * row_h))
 
 
-def draw_name_entry():
-    """Arcade 3-initial entry screen (also accepts keyboard typing)."""
-    screen.fill(BG)
+def _draw_name_entry_surface(surf):
+    """Render the active name-entry screen onto `surf`."""
+    surf.fill(BG)
     for sx, sy in _STARS_RESULTS:
-        pygame.draw.circle(screen, (40, 35, 65), (sx, sy), 1)
+        pygame.draw.circle(surf, (40, 35, 65), (sx, sy), 1)
 
     t = _tcache('ne_title', "NEW HIGH SCORE!", F_TITLE, GOLD)
-    screen.blit(t, (SW // 2 - t.get_width() // 2, SH // 4 - 40))
+    surf.blit(t, (SW // 2 - t.get_width() // 2, SH // 4 - 40))
 
     if _entry_label:
         pl = _tcache(('ne_label', _entry_label), _entry_label, F_MENU, Q_PURPLE)
-        screen.blit(pl, (SW // 2 - pl.get_width() // 2, SH // 4 + 10))
+        surf.blit(pl, (SW // 2 - pl.get_width() // 2, SH // 4 + 10))
 
     sc = _tcache(('ne_score', _entry_score), f"{_entry_score:,}", F_BIG, WHITE)
-    screen.blit(sc, (SW // 2 - sc.get_width() // 2, SH // 4 + 56))
+    surf.blit(sc, (SW // 2 - sc.get_width() // 2, SH // 4 + 56))
 
-    # If the player has typed a keyboard name, show that; else show the 3 reels
     cy = SH // 2 + 70
     if _entry_typed:
         name_s = _entry_typed.upper() + ("_" if (pygame.time.get_ticks() // 400) % 2 else " ")
         ns = F_BIG.render(name_s, True, GOLD)
-        screen.blit(ns, (SW // 2 - ns.get_width() // 2, cy))
+        surf.blit(ns, (SW // 2 - ns.get_width() // 2, cy))
         hint = "type name   ENTER confirm   BACKSPACE delete"
     else:
         slot_w = 90
@@ -1827,22 +1847,40 @@ def draw_name_entry():
             ch = _entry_initials[i]
             box = pygame.Rect(x0 + i * slot_w + 10, cy - 10, slot_w - 20, 84)
             active = (i == _entry_pos)
-            pygame.draw.rect(screen, (30, 20, 55) if active else (18, 12, 34),
+            pygame.draw.rect(surf, (30, 20, 55) if active else (18, 12, 34),
                              box, border_radius=8)
-            pygame.draw.rect(screen, GOLD if active else (80, 70, 110),
+            pygame.draw.rect(surf, GOLD if active else (80, 70, 110),
                              box, 3 if active else 1, border_radius=8)
             cs = F_BIG.render(ch if ch != " " else "_", True,
                               WHITE if active else (170, 160, 200))
-            screen.blit(cs, (box.centerx - cs.get_width() // 2,
-                             box.centery - cs.get_height() // 2))
+            surf.blit(cs, (box.centerx - cs.get_width() // 2,
+                           box.centery - cs.get_height() // 2))
             if active:
                 up = F_SM.render("▲", True, GOLD); dn = F_SM.render("▼", True, GOLD)
-                screen.blit(up, (box.centerx - up.get_width() // 2, box.top - 24))
-                screen.blit(dn, (box.centerx - dn.get_width() // 2, box.bottom + 4))
+                surf.blit(up, (box.centerx - up.get_width() // 2, box.top - 24))
+                surf.blit(dn, (box.centerx - dn.get_width() // 2, box.bottom + 4))
         hint = "▲▼ change letter    START / → next    SELECT confirm"
 
     hs = _tcache(('ne_hint', _entry_typed != ""), hint, F_SM, (110, 100, 150))
-    screen.blit(hs, (SW // 2 - hs.get_width() // 2, SH - 60))
+    surf.blit(hs, (SW // 2 - hs.get_width() // 2, SH - 60))
+
+
+def _draw_waiting_surface(surf, who_label: str):
+    """Shown on the screen of the player who is NOT currently typing."""
+    surf.fill(BG)
+    for sx, sy in _STARS_RESULTS:
+        pygame.draw.circle(surf, (40, 35, 65), (sx, sy), 1)
+    msg = _tcache(('wait_msg', who_label), f"Waiting for {who_label}...",
+                  F_MENU, (160, 140, 210))
+    surf.blit(msg, (SW // 2 - msg.get_width() // 2, SH // 2 - 20))
+    sub = _tcache('wait_sub', "entering their name", F_SM, DIM)
+    surf.blit(sub, (SW // 2 - sub.get_width() // 2, SH // 2 + 26))
+
+
+def draw_name_entry():
+    """Main screen shows whoever is currently entering. The 2nd screen routing
+    is handled by the main loop. (1P: only the main screen is used.)"""
+    _draw_name_entry_surface(screen)
     pygame.display.flip()
 
 
@@ -2175,8 +2213,21 @@ def main():
 
         # ── NAME ENTRY (new high score) ───────────────────────────────────────
         if game_state == GameState.NAME_ENTRY:
-            draw_name_entry()
-            _present_logo()
+            # The player currently entering sees the entry box on THEIR screen;
+            # the other screen shows a "waiting" message. Screen 0 = main (P1),
+            # screen 1 = second monitor (P2).
+            if n_players == 2 and p2 and two_screen_mode:
+                if _entry_idx == 0:
+                    _draw_name_entry_surface(screen); pygame.display.flip()
+                    _present_second(lambda s: _draw_waiting_surface(s, "Player 1"))
+                else:
+                    _draw_waiting_surface(screen, "Player 2"); pygame.display.flip()
+                    _present_second(_draw_name_entry_surface)
+            else:
+                # Solo, or split-screen fallback (one monitor): show the active
+                # entry on the main screen regardless of which player.
+                draw_name_entry()
+                _present_logo()
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     pygame.quit(); sys.exit()
@@ -2230,8 +2281,29 @@ def main():
 
         # ── RESULTS ───────────────────────────────────────────────────────────
         if game_state == GameState.RESULTS:
-            draw_results()
-            _present_logo()
+            if n_players == 2 and p2 and split_mode:
+                # One monitor: both players' panels side by side on one screen
+                screen.fill(BG)
+                for sx, sy in _STARS_RESULTS:
+                    pygame.draw.circle(screen, (40, 35, 65), (sx, sy), 1)
+                _draw_results_panel(screen, p1, SW // 4,     SH // 2 + 20, "PLAYER 1")
+                _draw_results_panel(screen, p2, SW * 3 // 4, SH // 2 + 20, "PLAYER 2")
+                pygame.draw.line(screen, (50, 40, 80), (SW // 2, 95), (SW // 2, SH - 55), 1)
+                if last_song:
+                    _draw_board_list(screen, last_song["title"], SW // 2, SH - 200,
+                                     compact=True)
+                hint = _tcache('res_hint', "START / R  play again     SELECT / ESC  menu",
+                               F_SM, (80, 70, 120))
+                screen.blit(hint, (SW // 2 - hint.get_width() // 2, SH - 40))
+                pygame.display.flip()
+            else:
+                # Two monitors (or solo): each player's own results on own screen
+                draw_results()   # main screen = P1 (or solo)
+                if n_players == 2 and p2:
+                    _present_second(lambda s: _draw_results_surface(
+                        s, p2, "PLAYER 2", _just_entered.get(1)))
+                else:
+                    _present_logo()
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     pygame.quit(); sys.exit()
@@ -2323,13 +2395,16 @@ def main():
             else:
                 _end_timer += dt
                 if _end_timer >= END_GRACE_S:
-                    # Build the name-entry queue for players who made the top-5
+                    # Build the name-entry queue for players who made the top-5.
+                    # Each entry carries the player index so we know which
+                    # screen to show the entry box on.
                     title = last_song["title"] if last_song else ""
+                    _just_entered[0] = _just_entered[1] = None
                     queue = []
                     if _qualifies(title, p1.score):
-                        queue.append((p1, "PLAYER 1" if n_players == 2 else ""))
+                        queue.append((p1, "PLAYER 1" if n_players == 2 else "", 0))
                     if p2 and _qualifies(title, p2.score):
-                        queue.append((p2, "PLAYER 2"))
+                        queue.append((p2, "PLAYER 2", 1))
                     if queue:
                         _begin_name_entry(queue)   # -> NAME_ENTRY
                     else:
