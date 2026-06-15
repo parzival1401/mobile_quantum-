@@ -3,17 +3,17 @@ dance_optimized_horizontal.py  —  Quantum Dance (LANDSCAPE, Pi 4B optimized)
 ===========================================================================
 Quantum Exhibition  |  Classical vs Quantum Computing
 
-LANDSCAPE variant of quantum_optimized.py. IDENTICAL gameplay, visuals,
-song select, dual-screen quantum collapse, controls, and optimizations —
-the ONLY difference is the screen orientation:
+LANDSCAPE variant of quantum_optimized.py. This file is a BYTE-FOR-BYTE
+copy of quantum_optimized.py with the SINGLE difference being screen
+orientation:
 
   quantum_optimized.py        → 768 x 1024  (portrait, screen rotated 90°)
   dance_optimized_horizontal  → 1024 x 768  (landscape, screen NOT rotated)
 
-Use this file when the monitor is in normal landscape orientation (no
-wlr-randr --transform 90). Notes still fall top-to-bottom; the play field
-is wider and shorter. Every layout value is derived from SW/SH so the whole
-UI adapts automatically.
+Gameplay, visuals, song select, dual-screen quantum collapse, controls,
+audio config, and every optimization are IDENTICAL. All layout values are
+derived from SW/SH so the UI adapts automatically to landscape. Use this
+file when the monitor is in normal landscape (no wlr-randr --transform 90).
 
 Performance changes (NO gameplay/visual difference):
   - GPU-accelerated present: DOUBLEBUF + vsync on the main window
