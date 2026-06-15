@@ -917,9 +917,9 @@ class Slider:
 
         t = F_SM.render(self.title, True, self.color)
         surf.blit(t, (self.cx - t.get_width() // 2, self.y_top - 22))
-        mx_t = F_XSM.render("▲ MAX", True, (r // 2, g // 2, b // 2))
+        mx_t = F_XSM.render("MAX", True, (r // 2, g // 2, b // 2))
         surf.blit(mx_t, (self.cx - mx_t.get_width() // 2, self.y_top - 36))
-        mn_t = F_XSM.render("▼ MIN", True, (r // 2, g // 2, b // 2))
+        mn_t = F_XSM.render("MIN", True, (r // 2, g // 2, b // 2))
         surf.blit(mn_t, (self.cx - mn_t.get_width() // 2, y_b + 4))
 
         val_str = self.fmt.format(self.val)
@@ -1181,7 +1181,7 @@ class PlayerState:
             for m in COMBO_MILESTONES:
                 if self.combo >= m and self.last_milestone < m:
                     self.last_milestone  = m
-                    self.milestone_text  = f"COMBO  ×{m}!"
+                    self.milestone_text  = f"COMBO  x{m}!"
                     self.milestone_timer = 90
                     self.flash_timer     = 8
                     _spawn_burst(self.particles, scx, TARGET_Y, GOLD, _BURST_COLLAPSE)
@@ -1320,7 +1320,7 @@ def draw_lanes(surf, key_flash, ctx: RenderCtx, cy: int):
         x = _lx(i, ctx)
         pygame.draw.line(surf, (col_pulse, 20, col_pulse),
                          (x + 4, cy), (x + ctx.lane_w - 4, cy), 2)
-    cl = _tcache(('czlbl', col_pulse // 20), "◆ COLLAPSE ZONE ◆", F_XSM, (col_pulse, 40, col_pulse))
+    cl = _tcache(('czlbl', col_pulse // 20), "- COLLAPSE ZONE -", F_XSM, (col_pulse, 40, col_pulse))
     surf.blit(cl, (_lcx(0, ctx) - cl.get_width() // 2, cy - 15))
 
 
@@ -1403,7 +1403,7 @@ def draw_top(surf, ps: PlayerState, ctx: RenderCtx, label: str = ""):
     surf.blit(_TOP_BORDER_FRAMES[tick % 30], (0, TOP_H - 6))
 
     # Rainbow cycling title — cached per character/color combo
-    title_str = "QUANTUM DANCE" + (f"  —  {label}" if label else "")
+    title_str = "QUANTUM DANCE" + (f"  -  {label}" if label else "")
     tx = sw // 2 - sum(F_TITLE.size(ch)[0] for ch in title_str) // 2
     for i, ch in enumerate(title_str):
         hue = (tick * 2 + i * 20) % 360
@@ -1423,7 +1423,7 @@ def draw_top(surf, ps: PlayerState, ctx: RenderCtx, label: str = ""):
     surf.blit(sc, (10, 48))
 
     combo_col = GOLD if ps.combo >= 10 else WHITE
-    cb = _tcache(('combo', id(ps)), f"×{ps.combo}  COMBO", F_MED, combo_col)
+    cb = _tcache(('combo', id(ps)), f"x{ps.combo}  COMBO", F_MED, combo_col)
     surf.blit(cb, (sw - cb.get_width() - 10, 48))
 
     qc = _tcache('collapses', f"collapses  {q_collapsed}/{q_total}", F_XSM, (170, 70, 230))
@@ -1438,21 +1438,21 @@ def draw_bottom(surf, ctx: RenderCtx):
     surf.blit(_BOT_BORDER_FRAMES[tick % 30], (0, y0))
 
     pct = int(bias_slider.val)
-    bias_txt = f"⬡  Quantum — 2 lanes  |  {pct}% lane 1 / {100-pct}% lane 2"
-    surf.blit(_tcache('cl_txt', "■  Classical — stays in its lane", F_XSM, (180, 220, 255)),
+    bias_txt = f"[Q]  Quantum - 2 lanes  |  {pct}% lane 1 / {100-pct}% lane 2"
+    surf.blit(_tcache('cl_txt', "[C]  Classical - stays in its lane", F_XSM, (180, 220, 255)),
               (14, y0 + 14))
     surf.blit(_tcache('bias_txt', bias_txt, F_XSM, (200, 100, 255)),
               (14, y0 + 32))
 
     if n_players == 2:
-        hint = _tcache('2p_hint', "2P: entangled collapse — opposite lanes", F_XSM, (170, 70, 230))
+        hint = _tcache('2p_hint', "2P: entangled collapse - opposite lanes", F_XSM, (170, 70, 230))
         surf.blit(hint, (sw - hint.get_width() - 14, y0 + 14))
-        ctrl = _tcache('2p_ctrl', "P2: A ↔  S ↓  W ↑  D →", F_XSM, DIM)
+        ctrl = _tcache('2p_ctrl', "P2:  A  S  W  D", F_XSM, DIM)
         surf.blit(ctrl, (sw - ctrl.get_width() - 14, y0 + 32))
     else:
         for i, (k, line) in enumerate([
             ('q_line1', "Quantum: particle exists in multiple"),
-            ('q_line2', "states until MEASURED  ⬡"),
+            ('q_line2', "states until MEASURED"),
         ]):
             t = _tcache(k, line, F_XSM, DIM)
             surf.blit(t, (sw - t.get_width() - 14, y0 + 14 + i * 17))
@@ -1485,7 +1485,7 @@ def draw_menu():
 
     # ── Blinking "INSERT COIN" ────────────────────────────────────────────────
     if (t // 22) % 2 == 0:
-        coin = _tcache('insert_coin', "► INSERT COIN ◄", F_MENUSM, (255, 230, 0))
+        coin = _tcache('insert_coin', ">> INSERT COIN <<", F_MENUSM, (255, 230, 0))
         screen.blit(coin, (SW // 2 - coin.get_width() // 2, 28))
 
     # ── Rainbow cycling title — cached chars ─────────────────────────────────
@@ -1547,7 +1547,7 @@ def draw_menu():
 
         # Arrow indicator on selected row
         if selected:
-            arrow = _tcache(('menu_sel_arrow', idx), "►", F_MENU, WHITE)
+            arrow = _tcache(('menu_sel_arrow', idx), ">", F_MENU, WHITE)
             screen.blit(arrow, (bx - arrow.get_width() - 10,
                                 rect.centery - arrow.get_height() // 2))
 
@@ -1613,7 +1613,7 @@ def draw_song_select(cursor: int, num_players: int) -> list:
 
     mode_key = '1p_mode' if num_players == 1 else '2p_mode'
     mode_lbl = _tcache(mode_key,
-        f"{'1 PLAYER' if num_players == 1 else '2 PLAYERS'}  —  choose a track",
+        f"{'1 PLAYER' if num_players == 1 else '2 PLAYERS'}  -  choose a track",
         F_MENUSM, (140, 100, 200))
     screen.blit(mode_lbl, (SW // 2 - mode_lbl.get_width() // 2, 72))
 
@@ -1673,7 +1673,7 @@ def draw_song_select(cursor: int, num_players: int) -> list:
         screen.blit(diff_s, (bx_ + 8, by_ + 3))
 
     hint = _tcache('sel_hint',
-                   "↑↓ navigate   START play   ←→ high scores   SELECT back",
+                   "UP/DOWN navigate   START play   LEFT/RIGHT scores   SELECT back",
                    F_XSM, (70, 55, 100))
     screen.blit(hint, (SW // 2 - hint.get_width() // 2, ry0 + len(SONGS) * row_h + 8))
 
@@ -1748,10 +1748,10 @@ def _draw_results_panel(surf, ps: PlayerState, cx: int, cy: int, title: str):
 
     # Stats row
     for i, (icon, val, col) in enumerate([
-        ("★ PERFECT", str(ps.perfect_count), (100, 255, 150)),
-        ("◆ GOOD",    str(ps.good_count),    (80, 200, 255)),
-        ("✕ MISS",    str(ps.miss_count),    (180, 80, 80)),
-        ("⚡ COMBO",  f"×{ps.max_combo}",    GOLD),
+        ("PERFECT", str(ps.perfect_count), (100, 255, 150)),
+        ("GOOD",    str(ps.good_count),    (80, 200, 255)),
+        ("MISS",    str(ps.miss_count),    (180, 80, 80)),
+        ("COMBO",   f"x{ps.max_combo}",    GOLD),
     ]):
         bx = cx - 140 + i * 72
         by = cy + 46
@@ -1769,12 +1769,12 @@ def _draw_results_surface(surf, ps: PlayerState, label: str, hi_name=None):
     for sx, sy in _STARS_RESULTS:
         pygame.draw.circle(surf, (40, 35, 65), (sx, sy), 1)
 
-    title = _tcache('res_title', "✦  GREAT GAME!  ✦", F_TITLE, Q_PURPLE)
+    title = _tcache('res_title', "*  GREAT GAME!  *", F_TITLE, Q_PURPLE)
     surf.blit(title, (SW // 2 - title.get_width() // 2, 22))
 
     if last_song:
         song_lbl = _tcache('res_song',
-            f"{last_song['title']}  —  {last_song['artist']}", F_MED, DIM)
+            f"{last_song['title']}  -  {last_song['artist']}", F_MED, DIM)
         surf.blit(song_lbl, (SW // 2 - song_lbl.get_width() // 2, 62))
 
     _draw_results_panel(surf, ps, SW // 2, SH // 2 - 30, label)
@@ -1805,7 +1805,7 @@ def _draw_board_list(surf, song_title: str, cx: int, top_y: int,
     row_h = 26 if compact else 34
     y = top_y + 32
     if not board:
-        empty = _tcache('board_empty', "no scores yet — be the first!", F_SM, DIM)
+        empty = _tcache('board_empty', "no scores yet - be the first!", F_SM, DIM)
         surf.blit(empty, (cx - empty.get_width() // 2, y))
         return
     for i, e in enumerate(board):
@@ -1856,10 +1856,10 @@ def _draw_name_entry_surface(surf):
             surf.blit(cs, (box.centerx - cs.get_width() // 2,
                            box.centery - cs.get_height() // 2))
             if active:
-                up = F_SM.render("▲", True, GOLD); dn = F_SM.render("▼", True, GOLD)
+                up = F_SM.render("+", True, GOLD); dn = F_SM.render("-", True, GOLD)
                 surf.blit(up, (box.centerx - up.get_width() // 2, box.top - 24))
                 surf.blit(dn, (box.centerx - dn.get_width() // 2, box.bottom + 4))
-        hint = "▲▼ change letter    START / → next    SELECT confirm"
+        hint = "UP/DOWN change letter   START next   SELECT confirm"
 
     hs = _tcache(('ne_hint', _entry_typed != ""), hint, F_SM, (110, 100, 150))
     surf.blit(hs, (SW // 2 - hs.get_width() // 2, SH - 60))
@@ -1893,7 +1893,7 @@ def draw_leaderboard():
     t = _tcache(('lb_title', _leader_view_idx), "HIGH SCORES", F_TITLE, Q_PURPLE)
     screen.blit(t, (SW // 2 - t.get_width() // 2, 40))
     sub = _tcache(('lb_song', _leader_view_idx),
-                  f"{song['title']} — {song['artist']}", F_MENUSM, DIM)
+                  f"{song['title']} - {song['artist']}", F_MENUSM, DIM)
     screen.blit(sub, (SW // 2 - sub.get_width() // 2, 92))
     _draw_board_list(screen, song["title"], SW // 2, SH // 2 - 80)
     hint = _tcache('lb_hint', "SELECT / ESC  back", F_SM, (110, 100, 150))
