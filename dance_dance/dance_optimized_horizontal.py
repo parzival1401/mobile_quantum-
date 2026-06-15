@@ -163,7 +163,7 @@ try:
     SFX_MILESTONE = _make_chord([523, 659, 784, 1047], 220, vol=0.18)
     SFX_NAV       = _make_tone(660, 40, vol=0.12)    # menu navigation beep
     SFX_CONFIRM   = _make_chord([523, 659, 784], 120, vol=0.15)  # menu confirm
-    SFX_MENU_MUSIC = _make_menu_music()
+    SFX_MENU_MUSIC = None   # menu music disabled (set _make_menu_music() to re-enable)
     _sfx_ok = True
 except Exception:
     SFX_PERFECT = SFX_GOOD = SFX_MISS = SFX_COLLAPSE = None
