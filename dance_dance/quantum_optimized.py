@@ -1788,6 +1788,7 @@ def update(dt: float, music_pos_ms: int = -1):
 
     # Spawning
     if music_pos_ms >= 0:
+        # Beat-synced spawning while the song is playing
         beat_time = max(0.0, music_pos_ms / 1000.0 - SONG_OFFSET)
         cur_beat  = int(beat_time * SONG_BPM / 60.0)
         # Catch up on any beats missed during a slow frame
@@ -1796,7 +1797,10 @@ def update(dt: float, music_pos_ms: int = -1):
                 spawn_note()
         if cur_beat > last_beat:
             last_beat = cur_beat
-    else:
+    elif SONG_FILE is None:
+        # Free-play mode (no song loaded) — timer-based spawning.
+        # NOTE: when a SONG_FILE exists but the music has stopped, we
+        # intentionally spawn nothing so the lanes drain and RESULTS shows.
         spawn_timer -= dt
         if spawn_timer <= 0:
             spawn_note()
