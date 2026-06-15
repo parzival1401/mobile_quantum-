@@ -1136,6 +1136,8 @@ spawn_timer        = 0.9   # seconds until first note spawn
 collapsed_outcomes : dict = {}   # nid → (p1_lane, p2_lane)
 last_beat          = -1
 _game_elapsed      = 0.0   # seconds since game started (fallback timer)
+END_GRACE_S        = 2.0   # seconds to wait after the song ends before RESULTS
+_end_timer         = -1.0  # counts up once the song is done (-1 = not started)
 
 p1 : PlayerState = None
 p2 : PlayerState = None
@@ -1694,7 +1696,7 @@ def start_game(num_players: int, song: dict):
     global q_collapsed, q_total, tick, spawn_timer, collapsed_outcomes, last_beat, _game_elapsed
     global win2, ren2, surf2
     global SONG_FILE, SONG_BPM, SONG_OFFSET, SONG_DURATION, _active_beats_fall
-    global two_screen_mode, split_mode, ctx1, ctx2
+    global two_screen_mode, split_mode, ctx1, ctx2, _end_timer
     last_song = song
 
     n_players  = num_players
@@ -1718,6 +1720,7 @@ def start_game(num_players: int, song: dict):
     collapsed_outcomes = {}
     last_beat      = -1
     _game_elapsed  = 0.0
+    _end_timer     = -1.0   # reset end-of-song grace timer
     Note._nid      = 0
 
     # Don't destroy win2 here — we reuse the logo window as P2 window for 2P
@@ -1860,7 +1863,7 @@ _seen_collapsed_nids: set = set()
 # ─────────────────────────────────────────────────────────────────────────────
 def main():
     global game_state, q_collapsed, _seen_collapsed_nids
-    global n_players, song_cursor, last_song
+    global n_players, song_cursor, last_song, _end_timer
     btn1_rect = btn2_rect = None
     song_rects: list = []
 
@@ -2054,16 +2057,23 @@ def main():
                 try: pygame.mixer.music.set_volume(vol)
                 except Exception: pass
 
-        # ── Transition to RESULTS ─────────────────────────────────────────────
+        # ── Transition to RESULTS (after a short grace period) ────────────────
         if music_playing:
             song_done = not pygame.mixer.music.get_busy()
         else:
             song_done = SONG_FILE is not None and _game_elapsed >= SONG_DURATION
 
-        if song_done and not p1.notes and (p2 is None or not p2.notes):
-            try: pygame.mixer.music.set_volume(1.0)
-            except Exception: pass
-            game_state = GameState.RESULTS
+        # Once the song is done AND all notes have drained, start a 2s countdown
+        notes_drained = not p1.notes and (p2 is None or not p2.notes)
+        if song_done and notes_drained:
+            if _end_timer < 0:
+                _end_timer = 0.0               # begin grace period
+                try: pygame.mixer.music.set_volume(1.0)
+                except Exception: pass
+            else:
+                _end_timer += dt
+                if _end_timer >= END_GRACE_S:
+                    game_state = GameState.RESULTS
 
         # ── Render ────────────────────────────────────────────────────────────
         if split_mode and n_players == 2 and p2 and ctx1 and ctx2:
