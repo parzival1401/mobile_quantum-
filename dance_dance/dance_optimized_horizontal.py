@@ -3,19 +3,12 @@ dance_optimized_horizontal.py  —  Quantum Dance (LANDSCAPE, Pi 4B optimized)
 ===========================================================================
 Quantum Exhibition  |  Classical vs Quantum Computing
 
-LANDSCAPE variant of quantum_optimized.py. This file is a BYTE-FOR-BYTE
-copy of quantum_optimized.py with the SINGLE difference being screen
-orientation:
+LANDSCAPE variant of quantum_optimized.py — byte-for-byte identical except
+the screen orientation:  1024 x 768 (landscape) instead of 768 x 1024
+(portrait). All gameplay, leaderboard, song select, and dual-screen quantum
+collapse are the same. Use when the monitor is NOT rotated 90°.
 
-  quantum_optimized.py        → 768 x 1024  (portrait, screen rotated 90°)
-  dance_optimized_horizontal  → 1024 x 768  (landscape, screen NOT rotated)
-
-Gameplay, visuals, song select, dual-screen quantum collapse, controls,
-audio config, and every optimization are IDENTICAL. All layout values are
-derived from SW/SH so the UI adapts automatically to landscape. Use this
-file when the monitor is in normal landscape (no wlr-randr --transform 90).
-
-Performance changes (NO gameplay/visual difference):
+Performance changes vs quantum_dance.py (NO gameplay/visual difference):
   - GPU-accelerated present: DOUBLEBUF + vsync on the main window
   - get_collapse_y() computed ONCE per frame, not per note
   - Classical + collapsed note bodies are pre-baked surfaces (1 blit
@@ -281,12 +274,102 @@ class GameState(Enum):
     MENU        = auto()
     SONG_SELECT = auto()
     PLAYING     = auto()
+    NAME_ENTRY  = auto()   # entering initials for a top-5 score
     RESULTS     = auto()
+    LEADERBOARD = auto()   # viewing a song's top-5 (from song select)
 
 game_state    = GameState.MENU
 n_players     = 1
 song_cursor   = 0      # highlighted row in song select screen
 last_song     = None   # dict of the last played song (for retry)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Leaderboard — one top-5 list per song, saved to leaderboard.json
+# ─────────────────────────────────────────────────────────────────────────────
+import json as _json
+LEADERBOARD_FILE = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)),
+                                 "leaderboard.json")
+LEADERBOARD_SIZE = 5
+_leaderboard: dict = {}   # { song_title: [ {"name": str, "score": int}, ... ] }
+
+def _load_leaderboard():
+    global _leaderboard
+    try:
+        with open(LEADERBOARD_FILE, "r") as f:
+            _leaderboard = _json.load(f)
+    except Exception:
+        _leaderboard = {}
+
+def _save_leaderboard():
+    try:
+        with open(LEADERBOARD_FILE, "w") as f:
+            _json.dump(_leaderboard, f, indent=2)
+    except Exception as e:
+        print(f"[WARNING] Could not save leaderboard: {e}")
+
+def _board_for(song_title: str) -> list:
+    return _leaderboard.get(song_title, [])
+
+def _qualifies(song_title: str, score: int) -> bool:
+    """True if `score` would make the song's top-5."""
+    board = _board_for(song_title)
+    if len(board) < LEADERBOARD_SIZE:
+        return score > 0
+    return score > board[-1]["score"]
+
+def _add_score(song_title: str, name: str, score: int) -> int:
+    """Insert a score, keep top-5 sorted. Returns the placed rank (0-based) or -1."""
+    board = list(_board_for(song_title))
+    board.append({"name": name, "score": int(score)})
+    board.sort(key=lambda e: e["score"], reverse=True)
+    board = board[:LEADERBOARD_SIZE]
+    _leaderboard[song_title] = board
+    _save_leaderboard()
+    for i, e in enumerate(board):
+        if e["name"] == name and e["score"] == int(score):
+            return i
+    return -1
+
+_load_leaderboard()
+
+# ── Name-entry state (arcade 3-initial input + optional keyboard typing) ──────
+_NAME_CHARS  = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 "   # last char = blank/space
+_entry_queue : list = []   # players still needing to enter, e.g. [(p_ref,"P1"), ...]
+_entry_initials = ["A", "A", "A"]   # current 3 initials being scrolled
+_entry_pos      = 0        # which of the 3 initials is active
+_entry_typed    = ""       # keyboard-typed name (overrides initials if non-empty)
+_entry_label    = ""       # "PLAYER 1" / "PLAYER 2" / "" for 1P
+_entry_score    = 0        # score being entered
+_leader_view_idx = 0       # which song's board is shown in LEADERBOARD state
+
+def _begin_name_entry(queue: list):
+    """queue = list of (player_state, label) that qualified. Sets up the first."""
+    global _entry_queue, _entry_initials, _entry_pos, _entry_typed
+    global _entry_label, _entry_score, game_state
+    _entry_queue = queue
+    if not _entry_queue:
+        game_state = GameState.RESULTS
+        return
+    ps, label = _entry_queue[0]
+    _entry_initials = ["A", "A", "A"]
+    _entry_pos      = 0
+    _entry_typed    = ""
+    _entry_label    = label
+    _entry_score    = ps.score
+    game_state = GameState.NAME_ENTRY
+
+def _commit_name_entry():
+    """Save the current entry and advance to the next player or to RESULTS."""
+    global _entry_queue, game_state
+    name = _entry_typed.strip().upper()[:10] if _entry_typed.strip() else "".join(_entry_initials).strip()
+    if not name:
+        name = "---"
+    _add_score(last_song["title"], name, _entry_score)
+    _entry_queue = _entry_queue[1:]
+    if _entry_queue:
+        _begin_name_entry(_entry_queue)   # set up next player
+    else:
+        game_state = GameState.RESULTS
 
 # ── Permanent second window (logo screen until 2P game starts) ────────────────
 _win_logo  = None   # SDL2 Window on the second monitor
@@ -1570,7 +1653,8 @@ def draw_song_select(cursor: int, num_players: int) -> list:
         pygame.draw.rect(screen, dc, (bx_, by_, bw, bh), 1, border_radius=6)
         screen.blit(diff_s, (bx_ + 8, by_ + 3))
 
-    hint = _tcache('sel_hint', "↑↓  navigate     Enter / click  select     ESC  back",
+    hint = _tcache('sel_hint',
+                   "↑↓ navigate   START play   ←→ high scores   SELECT back",
                    F_XSM, (70, 55, 100))
     screen.blit(hint, (SW // 2 - hint.get_width() // 2, ry0 + len(SONGS) * row_h + 8))
 
@@ -1683,8 +1767,101 @@ def draw_results():
     else:
         _draw_results_panel(screen, p1, SW // 2, SH // 2 + 20, "")
 
-    hint = _tcache('res_hint', "R  play again     ESC  menu", F_SM, (80, 70, 120))
+    # Top-5 leaderboard for this song, along the bottom
+    if last_song:
+        _draw_board_list(screen, last_song["title"], SW // 2, SH - 200, compact=True)
+
+    hint = _tcache('res_hint', "START / R  play again     SELECT / ESC  menu",
+                   F_SM, (80, 70, 120))
     screen.blit(hint, (SW // 2 - hint.get_width() // 2, SH - 40))
+    pygame.display.flip()
+
+
+def _draw_board_list(surf, song_title: str, cx: int, top_y: int,
+                     compact: bool = False, highlight: str = None):
+    """Draw a song's top-5 list centered at cx, starting at top_y."""
+    board = _board_for(song_title)
+    hdr = _tcache(('board_hdr', song_title[:6]), "TOP 5", F_MED, GOLD)
+    surf.blit(hdr, (cx - hdr.get_width() // 2, top_y))
+    row_h = 26 if compact else 34
+    y = top_y + 32
+    if not board:
+        empty = _tcache('board_empty', "no scores yet — be the first!", F_SM, DIM)
+        surf.blit(empty, (cx - empty.get_width() // 2, y))
+        return
+    for i, e in enumerate(board):
+        is_hi = (highlight is not None and e["name"] == highlight)
+        col = GOLD if is_hi else (200, 190, 230) if i == 0 else (150, 140, 190)
+        rank = f"{i+1}."
+        line = f"{rank}  {e['name']:<10}  {e['score']:>7,}"
+        # Use a monospace-ish render via the regular font (names padded)
+        surf_line = (F_MED if not compact else F_SM).render(line, True, col)
+        surf.blit(surf_line, (cx - surf_line.get_width() // 2, y + i * row_h))
+
+
+def draw_name_entry():
+    """Arcade 3-initial entry screen (also accepts keyboard typing)."""
+    screen.fill(BG)
+    for sx, sy in _STARS_RESULTS:
+        pygame.draw.circle(screen, (40, 35, 65), (sx, sy), 1)
+
+    t = _tcache('ne_title', "NEW HIGH SCORE!", F_TITLE, GOLD)
+    screen.blit(t, (SW // 2 - t.get_width() // 2, SH // 4 - 40))
+
+    if _entry_label:
+        pl = _tcache(('ne_label', _entry_label), _entry_label, F_MENU, Q_PURPLE)
+        screen.blit(pl, (SW // 2 - pl.get_width() // 2, SH // 4 + 10))
+
+    sc = _tcache(('ne_score', _entry_score), f"{_entry_score:,}", F_BIG, WHITE)
+    screen.blit(sc, (SW // 2 - sc.get_width() // 2, SH // 4 + 56))
+
+    # If the player has typed a keyboard name, show that; else show the 3 reels
+    cy = SH // 2 + 70
+    if _entry_typed:
+        name_s = _entry_typed.upper() + ("_" if (pygame.time.get_ticks() // 400) % 2 else " ")
+        ns = F_BIG.render(name_s, True, GOLD)
+        screen.blit(ns, (SW // 2 - ns.get_width() // 2, cy))
+        hint = "type name   ENTER confirm   BACKSPACE delete"
+    else:
+        slot_w = 90
+        x0 = SW // 2 - slot_w * 3 // 2
+        for i in range(3):
+            ch = _entry_initials[i]
+            box = pygame.Rect(x0 + i * slot_w + 10, cy - 10, slot_w - 20, 84)
+            active = (i == _entry_pos)
+            pygame.draw.rect(screen, (30, 20, 55) if active else (18, 12, 34),
+                             box, border_radius=8)
+            pygame.draw.rect(screen, GOLD if active else (80, 70, 110),
+                             box, 3 if active else 1, border_radius=8)
+            cs = F_BIG.render(ch if ch != " " else "_", True,
+                              WHITE if active else (170, 160, 200))
+            screen.blit(cs, (box.centerx - cs.get_width() // 2,
+                             box.centery - cs.get_height() // 2))
+            if active:
+                up = F_SM.render("▲", True, GOLD); dn = F_SM.render("▼", True, GOLD)
+                screen.blit(up, (box.centerx - up.get_width() // 2, box.top - 24))
+                screen.blit(dn, (box.centerx - dn.get_width() // 2, box.bottom + 4))
+        hint = "▲▼ change letter    START / → next    SELECT confirm"
+
+    hs = _tcache(('ne_hint', _entry_typed != ""), hint, F_SM, (110, 100, 150))
+    screen.blit(hs, (SW // 2 - hs.get_width() // 2, SH - 60))
+    pygame.display.flip()
+
+
+def draw_leaderboard():
+    """Full-screen leaderboard for the highlighted song (from song select)."""
+    screen.fill(BG)
+    for sx, sy in _STARS_RESULTS:
+        pygame.draw.circle(screen, (40, 35, 65), (sx, sy), 1)
+    song = SONGS[_leader_view_idx]
+    t = _tcache(('lb_title', _leader_view_idx), "HIGH SCORES", F_TITLE, Q_PURPLE)
+    screen.blit(t, (SW // 2 - t.get_width() // 2, 40))
+    sub = _tcache(('lb_song', _leader_view_idx),
+                  f"{song['title']} — {song['artist']}", F_MENUSM, DIM)
+    screen.blit(sub, (SW // 2 - sub.get_width() // 2, 92))
+    _draw_board_list(screen, song["title"], SW // 2, SH // 2 - 80)
+    hint = _tcache('lb_hint', "SELECT / ESC  back", F_SM, (110, 100, 150))
+    screen.blit(hint, (SW // 2 - hint.get_width() // 2, SH - 50))
     pygame.display.flip()
 
 
@@ -1868,6 +2045,7 @@ _seen_collapsed_nids: set = set()
 def main():
     global game_state, q_collapsed, _seen_collapsed_nids
     global n_players, song_cursor, last_song, _end_timer
+    global _entry_pos, _entry_typed, _entry_initials, _leader_view_idx
     btn1_rect = btn2_rect = None
     song_rects: list = []
 
@@ -1908,6 +2086,12 @@ def main():
                         n_players   = 2
                         song_cursor = 0
                         game_state  = GameState.SONG_SELECT
+                    elif (event.key == pygame.K_DELETE
+                          and (pygame.key.get_mods() & pygame.KMOD_SHIFT)):
+                        # Shift+Delete on the menu = wipe all leaderboards
+                        _leaderboard.clear()
+                        _save_leaderboard()
+                        print("[INFO] Leaderboards cleared")
                 elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                     if btn1_rect and btn1_rect.collidepoint(event.pos):
                         n_players   = 1
@@ -1953,6 +2137,10 @@ def main():
                     elif event.key == pygame.K_RETURN:
                         _stop_preview()
                         start_game(n_players, SONGS[song_cursor])
+                    elif event.key == pygame.K_TAB:           # view scores
+                        _stop_preview()
+                        _leader_view_idx = song_cursor
+                        game_state = GameState.LEADERBOARD
                     else:
                         for idx in range(len(SONGS)):
                             if event.key == getattr(pygame, f"K_{idx + 1}", None):
@@ -1976,10 +2164,70 @@ def main():
                         _play(SFX_CONFIRM)
                         _stop_preview()
                         start_game(n_players, SONGS[song_cursor])
+                    elif event.button in (MAT_LEFT, MAT_RIGHT):   # view scores
+                        _play(SFX_NAV)
+                        _stop_preview()
+                        _leader_view_idx = song_cursor
+                        game_state = GameState.LEADERBOARD
                     elif event.button == MAT_SELECT:
                         _play(SFX_NAV)
                         _stop_preview()
                         game_state = GameState.MENU
+            continue
+
+        # ── NAME ENTRY (new high score) ───────────────────────────────────────
+        if game_state == GameState.NAME_ENTRY:
+            draw_name_entry()
+            _present_logo()
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    pygame.quit(); sys.exit()
+                elif event.type == pygame.KEYDOWN:
+                    if event.key == pygame.K_RETURN:
+                        _commit_name_entry()
+                    elif event.key == pygame.K_BACKSPACE:
+                        _entry_typed = _entry_typed[:-1]
+                    elif event.key == pygame.K_ESCAPE:
+                        _commit_name_entry()   # skip = accept current
+                    elif event.unicode and event.unicode.isprintable() \
+                            and len(_entry_typed) < 10:
+                        _entry_typed += event.unicode
+                elif event.type == pygame.JOYBUTTONDOWN:
+                    # Arcade reel input (only when not keyboard-typing)
+                    idx = _NAME_CHARS.find(_entry_initials[_entry_pos])
+                    if event.button == MAT_UP:
+                        _entry_initials[_entry_pos] = _NAME_CHARS[(idx + 1) % len(_NAME_CHARS)]
+                        _play(SFX_NAV)
+                    elif event.button == MAT_DOWN:
+                        _entry_initials[_entry_pos] = _NAME_CHARS[(idx - 1) % len(_NAME_CHARS)]
+                        _play(SFX_NAV)
+                    elif event.button in (MAT_RIGHT, MAT_START):
+                        if _entry_pos < 2:
+                            _entry_pos += 1
+                            _play(SFX_NAV)
+                        else:
+                            _play(SFX_CONFIRM)
+                            _commit_name_entry()
+                    elif event.button == MAT_LEFT:
+                        if _entry_pos > 0:
+                            _entry_pos -= 1
+                            _play(SFX_NAV)
+                    elif event.button == MAT_SELECT:
+                        _play(SFX_CONFIRM)
+                        _commit_name_entry()
+            continue
+
+        # ── LEADERBOARD (viewing a song's board from song select) ─────────────
+        if game_state == GameState.LEADERBOARD:
+            draw_leaderboard()
+            _present_logo()
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    pygame.quit(); sys.exit()
+                elif event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
+                    game_state = GameState.SONG_SELECT
+                elif event.type == pygame.JOYBUTTONDOWN and event.button == MAT_SELECT:
+                    game_state = GameState.SONG_SELECT
             continue
 
         # ── RESULTS ───────────────────────────────────────────────────────────
@@ -2077,7 +2325,17 @@ def main():
             else:
                 _end_timer += dt
                 if _end_timer >= END_GRACE_S:
-                    game_state = GameState.RESULTS
+                    # Build the name-entry queue for players who made the top-5
+                    title = last_song["title"] if last_song else ""
+                    queue = []
+                    if _qualifies(title, p1.score):
+                        queue.append((p1, "PLAYER 1" if n_players == 2 else ""))
+                    if p2 and _qualifies(title, p2.score):
+                        queue.append((p2, "PLAYER 2"))
+                    if queue:
+                        _begin_name_entry(queue)   # -> NAME_ENTRY
+                    else:
+                        game_state = GameState.RESULTS
 
         # ── Render ────────────────────────────────────────────────────────────
         if split_mode and n_players == 2 and p2 and ctx1 and ctx2:

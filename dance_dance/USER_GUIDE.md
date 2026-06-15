@@ -35,12 +35,14 @@ There is **no fail state** — kids can never "lose", they just get a star ratin
 Both mats use the same buttons; the only difference is which one is Player 1
 vs Player 2 (decided by USB plug order at boot).
 
-| Screen        | Arrows (Up/Down/Left/Right) | START            | SELECT            |
-|---------------|-----------------------------|------------------|-------------------|
-| Main menu     | Toggle 1P ↔ 2P              | Go to song list  | *(nothing)*       |
-| Song select   | Up/Down = move in list      | Play song        | Back to menu      |
-| **Gameplay**  | **Step the falling arrows** | —                | Exit to menu      |
-| Results       | —                           | Play again       | Back to menu      |
+| Screen        | Arrows (Up/Down/Left/Right)         | START            | SELECT            |
+|---------------|-------------------------------------|------------------|-------------------|
+| Main menu     | Toggle 1P ↔ 2P                      | Go to song list  | *(nothing)*       |
+| Song select   | Up/Down = move list, ◄►= high scores| Play song        | Back to menu      |
+| **Gameplay**  | **Step the falling arrows**         | —                | Exit to menu      |
+| Name entry    | Up/Down = change letter, ◄►= move   | Next / confirm   | Confirm name      |
+| Results       | —                                   | Play again       | Back to menu      |
+| Leaderboard   | —                                   | —                | Back to song list |
 
 ### Keyboard (for testing without mats)
 
@@ -50,8 +52,34 @@ vs Player 2 (decided by USB plug order at boot).
 | Menu navigate     | Arrow keys    | —          |
 | Confirm           | Enter / Space | —          |
 | Back / Exit       | Esc           | —          |
+| Type name (entry) | Letters + Enter | —        |
+| View high scores  | Tab (in song select) | —   |
 | Nudge BIAS slider | `[` and `]`   | —          |
 | Reset BIAS to 50% | `\`           | —          |
+
+---
+
+## 2b. High-Score Leaderboard
+
+Each song keeps its own **Top 5** list, saved to `leaderboard.json` in this
+folder (survives reboots; shared between the portrait and landscape builds).
+
+- **After a song**, if a player's score makes that song's Top 5, a
+  **NEW HIGH SCORE** screen appears to enter a name:
+  - **On a mat:** scroll each of 3 letters with Up/Down, move with ◄►/START,
+    SELECT confirms (classic arcade initials).
+  - **On a keyboard:** just type a name (up to 10 letters) and press Enter.
+- In **2-player** mode each player is checked separately — both can make the
+  same song's board. Player 1 enters first, then Player 2.
+- The results screen and the **high-scores view** both show the Top 5 with the
+  newest entry highlighted in gold.
+- **View a song's scores without playing:** in the song-select screen press
+  **◄ or ►** on a mat (or **Tab** on a keyboard).
+
+### Resetting the leaderboard (between exhibition days)
+
+On the **main menu**, press **Shift + Delete** to wipe all high scores.
+(Or just delete the `leaderboard.json` file while the game is closed.)
 
 ---
 

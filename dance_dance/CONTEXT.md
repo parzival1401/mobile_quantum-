@@ -69,6 +69,26 @@ divide-by-`FPS` somewhere. That was the original bug.
 
 ---
 
+## 3b. Leaderboard
+
+- Stored in `leaderboard.json` (same folder as the script, via `__file__`).
+  Both the portrait and landscape builds share this one file.
+- Shape: `{ song_title: [ {"name": str, "score": int}, ... up to 5 ] }`.
+- Helpers: `_load_leaderboard`, `_save_leaderboard`, `_board_for`,
+  `_qualifies`, `_add_score`. All in the leaderboard section near the top.
+- States added: `GameState.NAME_ENTRY` (arcade 3-initial OR keyboard typing)
+  and `GameState.LEADERBOARD` (view a song's board from song select).
+- Flow: song ends → grace timer → build a queue of qualifying players
+  (`_begin_name_entry`) → NAME_ENTRY per player (`_commit_name_entry` advances
+  the queue) → RESULTS (which also renders the Top-5 via `_draw_board_list`).
+- 2P: each player checked separately; P1 enters first, then P2.
+- Reset: Shift+Delete on the menu calls `_leaderboard.clear()` + save.
+- Module-level entry state: `_entry_queue`, `_entry_initials`, `_entry_pos`,
+  `_entry_typed`, `_entry_label`, `_entry_score`, `_leader_view_idx`. Functions
+  that mutate these by reassignment declare them `global` (see `main()`).
+
+---
+
 ## 4. Key functions (line numbers approximate — search by name)
 
 | Symbol                     | Role                                                            |
