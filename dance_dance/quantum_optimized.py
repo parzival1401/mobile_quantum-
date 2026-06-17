@@ -1935,6 +1935,9 @@ def start_game(num_players: int, song: dict):
     _game_elapsed  = 0.0
     _end_timer     = -1.0   # reset end-of-song grace timer
     Note._nid      = 0
+    # Clear mat debounce timestamps — tick just reset to 0, so stale (large)
+    # values from the previous game would block every press until tick caught up.
+    _mat_last.clear()
 
     # Don't destroy win2 here — we reuse the logo window as P2 window for 2P
     win2 = ren2 = surf2 = None
@@ -2349,7 +2352,10 @@ def main():
                     stop_game()
                     break
                 key = (event.joy, event.button)
-                if tick - _mat_last.get(key, -_MAT_DEBOUNCE) >= _MAT_DEBOUNCE:
+                last = _mat_last.get(key, -_MAT_DEBOUNCE)
+                # `last > tick` means a game restart reset tick below a stale
+                # value — treat that as expired so input never gets stuck.
+                if last > tick or (tick - last) >= _MAT_DEBOUNCE:
                     _mat_last[key] = tick
                     lane = _mat_lane(event.button)
                     if lane is not None:
