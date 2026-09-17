@@ -568,13 +568,30 @@ bias_slider = Slider(
     desc=("collapse bias", "↑ favors lane 1", "↓ favors lane 2"),
 )
 
-# In BPM mode SPEED and COLLAPSE sliders are hidden; SPAWN and BIAS remain
+# In BPM mode SPEED and SPAWN are driven by the song; COLLAPSE and BIAS remain
+# player-adjustable.
 SLIDERS_FREE = [spawn_slider, speed_slider, collapse_slider, bias_slider]
-SLIDERS_BPM  = [spawn_slider, bias_slider]
+SLIDERS_BPM  = [spawn_slider, collapse_slider, bias_slider]
+
+# Bounds for the in-game collapse threshold, in px above the hit zone.
+COLLAPSE_MIN_PX = 40
+COLLAPSE_MAX_PX = 430
+COLLAPSE_STEP   = 15   # px per key press
+
+
+def nudge_collapse(delta_px: float):
+    """Move the shared collapse threshold; clamped. Affects both screens."""
+    collapse_slider.val = max(COLLAPSE_MIN_PX,
+                              min(COLLAPSE_MAX_PX, collapse_slider.val + delta_px))
 
 
 def get_collapse_y() -> int:
-    return _bpm_collapse_y() if SONG_FILE else int(TARGET_Y - collapse_slider.val)
+    # The COLLAPSE slider is now player-adjustable in BOTH free-play and song
+    # modes. It is a single shared object, so every screen reads the same value
+    # and the collapse line sits at the same height on both at the same time.
+    y = int(TARGET_Y - collapse_slider.val)
+    # Keep the line inside the playable lane area.
+    return max(LANE_TOP + 20, min(TARGET_Y - 10, y))
 
 def get_fall_speed() -> float:
     return _bpm_fall_speed() if SONG_FILE else speed_slider.val
@@ -1038,6 +1055,47 @@ def draw_bottom(surf, ctx: RenderCtx):
         ]):
             t = _tcache(k, line, F_XSM, DIM)
             surf.blit(t, (sw - t.get_width() - 14, y0 + 14 + i * 17))
+
+
+def draw_collapse_gauge(surf, ctx: RenderCtx):
+    """Compact vertical gauge for the shared quantum-collapse threshold.
+
+    Drawn in the left margin of each screen. Because it reads the single
+    shared collapse_slider, the fill height is identical on every screen and
+    moves at the same time. Returns the handle rect (screen coords) so the
+    main loop can support mouse dragging.
+    """
+    r, g, b = SL_COLLAPSE_C
+    track_x = 10
+    track_w = 8
+    y_top   = LANE_TOP + 40
+    y_bot   = LANE_BOT - 40
+    height  = y_bot - y_top
+
+    # Map the shared value (px above hit zone) to a 0..1 fill.
+    t = (collapse_slider.val - COLLAPSE_MIN_PX) / (COLLAPSE_MAX_PX - COLLAPSE_MIN_PX)
+    t = max(0.0, min(1.0, t))
+    hy = int(y_top + (1.0 - t) * height)
+
+    # Track + fill
+    pygame.draw.rect(surf, (22, 18, 42), (track_x, y_top, track_w, height), border_radius=4)
+    if y_bot - hy > 0:
+        pygame.draw.rect(surf, (r // 3, g // 3, b // 3),
+                         (track_x, hy, track_w, y_bot - hy), border_radius=4)
+    pygame.draw.rect(surf, (r // 2, g // 2, b // 2),
+                     (track_x, y_top, track_w, height), 1, border_radius=4)
+
+    # Handle
+    cx = track_x + track_w // 2
+    pygame.draw.circle(surf, (r // 5, g // 5, b // 5), (cx, hy), 9)
+    pygame.draw.circle(surf, SL_COLLAPSE_C, (cx, hy), 6)
+    pygame.draw.circle(surf, WHITE, (cx, hy), 2)
+
+    # Label
+    lbl = _tcache('cg_lbl', "COLLAPSE", F_XSM, SL_COLLAPSE_C)
+    surf.blit(lbl, (track_x - 2, y_top - 18))
+
+    return pygame.Rect(track_x - 8, y_top - 8, track_w + 24, height + 16)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1509,6 +1567,7 @@ def _render_player(surf, ps: PlayerState, ctx: RenderCtx, label: str = ""):
 
     draw_top(surf, ps, ctx, label)
     draw_bottom(surf, ctx)
+    draw_collapse_gauge(surf, ctx)   # shared threshold, identical on both screens
 
     # Milestone banner
     if ps.milestone_timer > 0:
@@ -1531,6 +1590,10 @@ def _render_player(surf, ps: PlayerState, ctx: RenderCtx, label: str = ""):
 # ─────────────────────────────────────────────────────────────────────────────
 # We count in the main loop after p1.update() using a seen-nids set.
 _seen_collapsed_nids: set = set()
+
+# Mouse-drag state for the in-game collapse-threshold gauge (list so nested
+# scopes can mutate it without a global declaration).
+_collapse_drag = [False]
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1648,6 +1711,14 @@ def main():
                     bias_slider.val = min(100.0, bias_slider.val + 5.0)
                 elif event.key == pygame.K_BACKSLASH:
                     bias_slider.val = 50.0
+                # Collapse threshold (shared across both screens):
+                #   '=' / '+' raises the line (more warning),
+                #   '-' lowers it (more surprise).
+                elif event.key in (pygame.K_EQUALS, pygame.K_PLUS,
+                                   pygame.K_KP_PLUS):
+                    nudge_collapse(+COLLAPSE_STEP)
+                elif event.key in (pygame.K_MINUS, pygame.K_KP_MINUS):
+                    nudge_collapse(-COLLAPSE_STEP)
 
                 for i, k in enumerate(KEYS_P1):
                     if event.key == k:
@@ -1657,6 +1728,25 @@ def main():
                     for i, k in enumerate(KEYS_P2):
                         if event.key == k:
                             p2.handle_key(i)
+
+            elif event.type in (pygame.MOUSEBUTTONDOWN, pygame.MOUSEBUTTONUP,
+                                pygame.MOUSEMOTION):
+                # Mouse drag on the collapse gauge (main screen). The gauge
+                # lives in the left margin; map the mouse Y to a threshold and
+                # write it to the single shared slider so both screens follow.
+                if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                    mx, my = event.pos
+                    if mx < 40:          # within the gauge column
+                        _collapse_drag[0] = True
+                elif event.type == pygame.MOUSEBUTTONUP:
+                    _collapse_drag[0] = False
+                elif event.type == pygame.MOUSEMOTION and _collapse_drag[0]:
+                    _, my = event.pos
+                    y_top = LANE_TOP + 40
+                    y_bot = LANE_BOT - 40
+                    frac  = 1.0 - max(0.0, min(1.0, (my - y_top) / (y_bot - y_top)))
+                    collapse_slider.val = (COLLAPSE_MIN_PX
+                        + frac * (COLLAPSE_MAX_PX - COLLAPSE_MIN_PX))
 
             elif event.type == pygame.JOYBUTTONDOWN:
                 key = (event.joy, event.button)
