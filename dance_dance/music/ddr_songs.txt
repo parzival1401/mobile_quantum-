@@ -35,7 +35,32 @@ SONG LIST
 6. Party Rock Anthem
    Artist     : LMFAO
    BPM        : 130
-   Difficulty : Extreme
+   Difficulty : Hard
+
+7. Sweet but Psycho
+   Artist     : Ava Max
+   BPM        : 133
+   Difficulty : Hard
+
+8. We Don't Talk Anymore
+   Artist     : Charlie Puth ft. Selena Gomez
+   BPM        : 100
+   Difficulty : Easy
+
+9. Middle
+   Artist     : DJ Snake ft. Bipolar Sunshine
+   BPM        : 105
+   Difficulty : Easy
+
+10. Bad Habits
+   Artist     : Ed Sheeran
+   BPM        : 126
+   Difficulty : Hard
+
+11. Runaway (U & I)
+   Artist     : Galantis
+   BPM        : 126
+   Difficulty : Hard
 
 --------------------------------------------------------------
 DIFFICULTY SCALE

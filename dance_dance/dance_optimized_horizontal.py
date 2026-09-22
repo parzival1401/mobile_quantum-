@@ -550,6 +550,21 @@ SONGS = [
     {"title": "Party Rock Anthem",      "artist": "LMFAO",
      "file": "music/LMFAO - Party Rock Anthem (Lyrics) ft. Lauren Bennett, GoonRock.mp3",
      "bpm": 130, "offset": 0.0, "difficulty": "Hard",    "duration":  90},
+    {"title": "Sweet but Psycho",       "artist": "Ava Max",
+     "file": "music/Ava Max - Sweet but Psycho [Official Music Video].mp3",
+     "bpm": 133, "offset": 0.0, "difficulty": "Hard",    "duration": 100},
+    {"title": "We Don't Talk Anymore",  "artist": "Charlie Puth ft. Selena Gomez",
+     "file": "music/Charlie Puth - We Don't Talk Anymore (feat. Selena Gomez) [Official Video].mp3",
+     "bpm": 100, "offset": 0.0, "difficulty": "Easy",    "duration": 110},
+    {"title": "Middle",                 "artist": "DJ Snake ft. Bipolar Sunshine",
+     "file": "music/DJ Snake ft. Bipolar Sunshine - Middle (Official Audio).mp3",
+     "bpm": 105, "offset": 0.0, "difficulty": "Easy",    "duration": 100},
+    {"title": "Bad Habits",             "artist": "Ed Sheeran",
+     "file": "music/Ed Sheeran - Bad Habits [Official Video].mp3",
+     "bpm": 126, "offset": 0.0, "difficulty": "Hard",    "duration": 110},
+    {"title": "Runaway (U & I)",        "artist": "Galantis",
+     "file": "music/Galantis - Runaway (U & I) (Official Video).mp3",
+     "bpm": 126, "offset": 0.0, "difficulty": "Hard",    "duration": 110},
 ]
 
 DIFF_SPEED = {"Easy": 1.0, "Hard": 1.5, "Extreme": 2.0}
