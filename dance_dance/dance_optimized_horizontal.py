@@ -1685,13 +1685,33 @@ def draw_song_select(cursor: int, num_players: int) -> list:
 
     mx, my = pygame.mouse.get_pos()
     row_h  = 72
-    row_w  = 720
+    row_w  = min(720, SW - 48)
     rx0    = (SW - row_w) // 2
     ry0    = 118
     rects  = []
 
-    for i, song in enumerate(SONGS):
-        ry     = ry0 + i * row_h
+    # ── Scrolling window ────────────────────────────────────────────────────
+    # Only as many rows as actually fit on screen are drawn, so the list works
+    # with any number of songs on any screen size. The highlighted song is kept
+    # centered; the window is clamped so no blank space shows past either end.
+    hint_h     = 34                       # room reserved for the hint line
+    avail_h    = (SH - 12) - ry0 - hint_h
+    max_rows   = max(1, avail_h // row_h)
+    n_songs    = len(SONGS)
+    visible    = min(max_rows, n_songs)
+    if n_songs <= visible:
+        top = 0
+    else:
+        top = cursor - visible // 2       # center the cursor
+        top = max(0, min(n_songs - visible, top))   # clamp to list bounds
+
+    # rects must align with SONGS indices for click detection; off-screen rows
+    # get an empty rect so mouse clicks can never match them.
+    rects = [pygame.Rect(0, 0, 0, 0) for _ in range(n_songs)]
+
+    for slot, i in enumerate(range(top, top + visible)):
+        song   = SONGS[i]
+        ry     = ry0 + slot * row_h
         rect   = pygame.Rect(rx0, ry, row_w, row_h - 6)
         hover  = rect.collidepoint(mx, my)
         active = i == cursor
@@ -1712,7 +1732,7 @@ def draw_song_select(cursor: int, num_players: int) -> list:
 
         pygame.draw.rect(screen, fill,   rect, border_radius=10)
         pygame.draw.rect(screen, border, rect, 2 if active else 1, border_radius=10)
-        rects.append(rect)
+        rects[i] = rect
 
         nc = WHITE if active else (180, 100, 255)
         num_s = _tcache(('snum', i, active), f"{i + 1}", F_MED, nc)
@@ -1738,10 +1758,25 @@ def draw_song_select(cursor: int, num_players: int) -> list:
         pygame.draw.rect(screen, dc, (bx_, by_, bw, bh), 1, border_radius=6)
         screen.blit(diff_s, (bx_ + 8, by_ + 3))
 
+    # Scroll indicators — show when songs exist above / below the window
+    if top > 0:
+        up_s = _tcache('sel_more_up', "^  more songs", F_XSM, (120, 90, 180))
+        screen.blit(up_s, (SW // 2 - up_s.get_width() // 2, ry0 - 15))
+    if top + visible < n_songs:
+        dn_s = _tcache('sel_more_dn', "v  more songs", F_XSM, (120, 90, 180))
+        screen.blit(dn_s, (SW // 2 - dn_s.get_width() // 2,
+                           ry0 + visible * row_h - 2))
+
+    # Position counter, e.g. "4 / 11"
+    pos_s = _tcache(('sel_pos', cursor, n_songs), f"{cursor + 1} / {n_songs}",
+                    F_XSM, (110, 90, 160))
+    screen.blit(pos_s, (rx0 + row_w - pos_s.get_width(), ry0 - 15))
+
     hint = _tcache('sel_hint',
                    "UP/DOWN navigate   START play   LEFT/RIGHT scores   SELECT back",
                    F_XSM, (70, 55, 100))
-    screen.blit(hint, (SW // 2 - hint.get_width() // 2, ry0 + len(SONGS) * row_h + 8))
+    screen.blit(hint, (SW // 2 - hint.get_width() // 2,
+                       ry0 + visible * row_h + 14))
 
     pygame.display.flip()
     return rects
