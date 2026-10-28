@@ -1,0 +1,9 @@
+# Potentiometer reader (Raspberry Pi only) - install into the game's venv:
+#   /home/quantummobile/mobile_quantum-/.venv/bin/pip install -r requirements-pot.txt
+#
+# RC timing backend (default). If RPi.GPIO fails to build or import on
+# Raspberry Pi OS Trixie, install the drop-in replacement instead:
+#   pip install rpi-lgpio
+RPi.GPIO
+# ADS1115 backend (only if you switch "backend" to "ads1115")
+smbus2

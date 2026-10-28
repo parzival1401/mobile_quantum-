@@ -23,6 +23,7 @@ Controls (in-game)
   A S W D      P2 lanes 0-3  (2P only)
   [  /  ]      Nudge BIAS slider ±5%
   \\            Reset BIAS to 50%
+  +  /  -      Raise / lower the COLLAPSE line (or turn the potentiometer)
   ESC          Return to menu
 """
 
@@ -43,21 +44,10 @@ _active_beats_fall = float(BEATS_TO_FALL)
 FADE_START  = 10.0   # seconds before end to begin fade-out                               
 
 # ─────────────────────────────────────────────────────────────────────────────
-# SERIAL PORT HOOK  (hardware potentiometer → BIAS slider)
+# HARDWARE POTENTIOMETER  (knob → COLLAPSE bar)
 # ─────────────────────────────────────────────────────────────────────────────
-# import threading, serial as _serial
-# bias_serial_val = None
-# def _serial_reader():
-#     global bias_serial_val
-#     try:
-#         with _serial.Serial("/dev/ttyUSB0", 9600, timeout=1) as port:
-#             while True:
-#                 line = port.readline().decode(errors="ignore").strip()
-#                 if line.isdigit():
-#                     bias_serial_val = max(0, min(100, int(line)))
-#     except Exception:
-#         pass
-# threading.Thread(target=_serial_reader, daemon=True).start()
+# Read on the Pi by pot_reader.py (separate process, see POTENTIOMETER_SETUP.md)
+# and received here over UDP — search for "_pot_poll".
 # ─────────────────────────────────────────────────────────────────────────────
 
 import os as _os
@@ -968,9 +958,16 @@ speed_slider = Slider(
     title="SPEED", value_fmt="{:.1f}", color=SL_SPEED_C,
     desc=("fall speed", "px / frame"),
 )
+# Bounds for the in-game collapse threshold, in px above the hit zone. The top
+# of the range follows the lane height (minus room for the gauge label), so the
+# bar spans the whole lane on the tall portrait screen as well as landscape.
+COLLAPSE_MIN_PX = 40
+COLLAPSE_MAX_PX = TARGET_Y - LANE_TOP - 80
+COLLAPSE_STEP   = 15   # px per key press
+
 collapse_slider = Slider(
     cx=_CX_COLLAPSE, y_top=_SL_Y, height=_SL_H,
-    min_val=40, max_val=430, init_val=195,
+    min_val=COLLAPSE_MIN_PX, max_val=COLLAPSE_MAX_PX, init_val=195,
     title="COLLAPSE", value_fmt="{:.0f}px", color=SL_COLLAPSE_C,
     desc=("above hit zone", "↑ more time", "↓ surprise!"),
 )
@@ -985,15 +982,71 @@ bias_slider = Slider(
 SLIDERS_FREE = [spawn_slider, speed_slider, collapse_slider, bias_slider]
 SLIDERS_BPM  = [spawn_slider, collapse_slider, bias_slider]
 
-# Bounds for the in-game collapse threshold, in px above the hit zone.
-COLLAPSE_MIN_PX = 40
-COLLAPSE_MAX_PX = 430
-COLLAPSE_STEP   = 15   # px per key press
-
 def nudge_collapse(delta_px: float):
     """Move the shared collapse threshold; clamped. Affects both screens."""
     collapse_slider.val = max(COLLAPSE_MIN_PX,
                               min(COLLAPSE_MAX_PX, collapse_slider.val + delta_px))
+    _pot_state["owns"] = False   # keys take the bar until the knob moves again
+
+
+# ── Hardware potentiometer → COLLAPSE bar ─────────────────────────────────────
+# pot_reader.py reads the knob on the Pi and sends "0.0".."1.0" over UDP. The
+# game launches it automatically on Linux once pot_config.json exists (made by
+# `python pot_reader.py --calibrate`). Knob wins; +/- keys and mouse still work
+# until the knob is turned again by at least POT_DEADBAND.
+POT_ENABLED  = True
+POT_UDP_PORT = 50555
+POT_DEADBAND = 0.02    # fraction of full knob travel
+
+_pot_sock  = None
+_pot_proc  = None
+_pot_state = {"last": None, "owns": True}
+
+def _pot_start():
+    """Open the UDP listener and, on Linux, launch pot_reader.py."""
+    global _pot_sock, _pot_proc
+    if not POT_ENABLED:
+        return
+    import socket, subprocess, atexit
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.bind(("127.0.0.1", POT_UDP_PORT))
+        s.setblocking(False)
+        _pot_sock = s
+    except OSError as e:
+        print(f"[INFO] Potentiometer listener off: {e}")
+        return
+    here   = _os.path.dirname(_os.path.abspath(__file__))
+    reader = _os.path.join(here, "pot_reader.py")
+    config = _os.path.join(here, "pot_config.json")
+    if sys.platform.startswith("linux") and _os.path.exists(reader) and _os.path.exists(config):
+        try:
+            _pot_proc = subprocess.Popen([sys.executable, reader, "--port", str(POT_UDP_PORT)])
+            atexit.register(_pot_proc.terminate)
+        except Exception as e:
+            print(f"[INFO] Could not start pot_reader.py: {e}")
+
+def _pot_poll():
+    """Apply the newest knob reading (if any) to the shared collapse bar."""
+    if _pot_sock is None:
+        return
+    v = None
+    while True:
+        try:
+            data = _pot_sock.recv(64)
+        except OSError:          # BlockingIOError = queue empty
+            break
+        try:
+            v = max(0.0, min(1.0, float(data)))
+        except ValueError:
+            pass
+    if v is None:
+        return
+    st = _pot_state
+    if st["owns"] or st["last"] is None or abs(v - st["last"]) >= POT_DEADBAND:
+        st["owns"] = True
+        st["last"] = v
+        collapse_slider.val = COLLAPSE_MIN_PX + v * (COLLAPSE_MAX_PX - COLLAPSE_MIN_PX)
 
 
 def get_collapse_y() -> int:
@@ -1350,7 +1403,7 @@ def draw_lanes(surf, key_flash, ctx: RenderCtx, cy: int):
         pygame.draw.line(surf, (col_pulse, 20, col_pulse),
                          (x + 4, cy), (x + ctx.lane_w - 4, cy), 2)
     cl = _tcache(('czlbl', col_pulse // 20), "- COLLAPSE ZONE -", F_XSM, (col_pulse, 40, col_pulse))
-    surf.blit(cl, (_lcx(0, ctx) - cl.get_width() // 2, cy - 15))
+    surf.blit(cl, (max(ctx.lx0 + 4, _lcx(0, ctx) - cl.get_width() // 2), cy - 15))
 
 
 def draw_hit_zone(surf, ctx: RenderCtx):
@@ -1427,13 +1480,15 @@ def draw_quantum(surf, note: Note, ctx: RenderCtx, cy_collapse: int):
 
 def draw_top(surf, ps: PlayerState, ctx: RenderCtx, label: str = ""):
     sw = ctx.sw
+    narrow = sw < SW   # one-monitor 2P split: half-width screen
+    tfont  = F_MED if narrow else F_TITLE
     pygame.draw.rect(surf, (4, 2, 14), (0, 0, sw, TOP_H))
     # Pre-baked animated border (30-frame cycle, plain surface blit)
     surf.blit(_TOP_BORDER_FRAMES[tick % 30], (0, TOP_H - 6))
 
     # Rainbow cycling title — cached per character/color combo
     title_str = "QUANTUM DANCE" + (f"  -  {label}" if label else "")
-    tx = sw // 2 - sum(F_TITLE.size(ch)[0] for ch in title_str) // 2
+    tx = sw // 2 - sum(tfont.size(ch)[0] for ch in title_str) // 2
     for i, ch in enumerate(title_str):
         hue = (tick * 2 + i * 20) % 360
         h = hue / 60.0
@@ -1444,19 +1499,21 @@ def draw_top(surf, ps: PlayerState, ctx: RenderCtx, label: str = ""):
         elif h < 4: r2,g2,b2 =   0, xv,255
         elif h < 5: r2,g2,b2 =  xv,  0,255
         else:       r2,g2,b2 = 255,  0, xv
-        cs = _rainbow_char(ch, r2, g2, b2, F_TITLE)
+        cs = _rainbow_char(ch, r2, g2, b2, tfont)
         surf.blit(cs, (tx, 6))
         tx += cs.get_width()
 
-    sc = _tcache(('score', id(ps)), f"SCORE  {ps.score:07d}", F_MED, GOLD)
-    surf.blit(sc, (10, 48))
+    row_y = 36 if narrow else 48
+    sfont = F_SM if narrow else F_MED
+    sc = _tcache(('score', id(ps)), f"SCORE  {ps.score:07d}", sfont, GOLD)
+    surf.blit(sc, (10, row_y))
 
     combo_col = GOLD if ps.combo >= 10 else WHITE
-    cb = _tcache(('combo', id(ps)), f"x{ps.combo}  COMBO", F_MED, combo_col)
-    surf.blit(cb, (sw - cb.get_width() - 10, 48))
+    cb = _tcache(('combo', id(ps), combo_col), f"x{ps.combo}  COMBO", sfont, combo_col)
+    surf.blit(cb, (sw - cb.get_width() - 10, row_y))
 
     qc = _tcache('collapses', f"collapses  {q_collapsed}/{q_total}", F_XSM, (170, 70, 230))
-    surf.blit(qc, (sw // 2 - qc.get_width() // 2, 52))
+    surf.blit(qc, (sw // 2 - qc.get_width() // 2, 60 if narrow else 52))
 
 
 def draw_bottom(surf, ctx: RenderCtx):
@@ -1475,9 +1532,13 @@ def draw_bottom(surf, ctx: RenderCtx):
 
     if n_players == 2:
         hint = _tcache('2p_hint', "2P: entangled collapse - opposite lanes", F_XSM, (170, 70, 230))
-        surf.blit(hint, (sw - hint.get_width() - 14, y0 + 14))
         ctrl = _tcache('2p_ctrl', "P2:  A  S  W  D", F_XSM, DIM)
-        surf.blit(ctrl, (sw - ctrl.get_width() - 14, y0 + 32))
+        if sw < SW:   # half-width split screen: stack under the left lines
+            surf.blit(hint, (14, y0 + 50))
+            surf.blit(ctrl, (14, y0 + 68))
+        else:
+            surf.blit(hint, (sw - hint.get_width() - 14, y0 + 14))
+            surf.blit(ctrl, (sw - ctrl.get_width() - 14, y0 + 32))
     else:
         for i, (k, line) in enumerate([
             ('q_line1', "Quantum: particle exists in multiple"),
@@ -1487,40 +1548,45 @@ def draw_bottom(surf, ctx: RenderCtx):
             surf.blit(t, (sw - t.get_width() - 14, y0 + 14 + i * 17))
 
 
-def draw_collapse_gauge(surf, ctx: RenderCtx):
-    """Compact vertical gauge for the shared quantum-collapse threshold.
+_GAUGE_LBL = []   # rotated "COLLAPSE" label, baked on first use
 
-    Reads the single shared collapse_slider, so the fill height is identical on
-    every screen and moves at the same time. Cheap: a few rects/circles, no
-    per-frame surface allocation (Pi-friendly).
+def draw_collapse_gauge(surf, ctx: RenderCtx):
+    """Vertical gauge for the shared quantum-collapse threshold.
+
+    The track spans exactly the range the collapse line can move through and
+    the knob sits at the line's real height, so gauge and line always agree.
+    Drawn in the left margin beside lane 1 (narrow on portrait/split screens).
+    Cheap: a few rects/circles plus one pre-baked label (Pi-friendly).
     """
     r, g, b = SL_COLLAPSE_C
-    track_x = 10
-    track_w = 8
-    y_top   = LANE_TOP + 40
-    y_bot   = LANE_BOT - 40
+    y_top   = TARGET_Y - COLLAPSE_MAX_PX
+    y_bot   = TARGET_Y - COLLAPSE_MIN_PX
     height  = y_bot - y_top
+    cx      = max(6, ctx.lx0 // 2)
+    track_w = 6
+    track_x = cx - track_w // 2
+    knob_r  = max(4, min(8, ctx.lx0 // 2 - 1))
+    hy      = get_collapse_y()
 
-    t = (collapse_slider.val - COLLAPSE_MIN_PX) / (COLLAPSE_MAX_PX - COLLAPSE_MIN_PX)
-    t = max(0.0, min(1.0, t))
-    hy = int(y_top + (1.0 - t) * height)
-
-    pygame.draw.rect(surf, (22, 18, 42), (track_x, y_top, track_w, height), border_radius=4)
+    pygame.draw.rect(surf, (22, 18, 42), (track_x, y_top, track_w, height), border_radius=3)
     if y_bot - hy > 0:
         pygame.draw.rect(surf, (r // 3, g // 3, b // 3),
-                         (track_x, hy, track_w, y_bot - hy), border_radius=4)
+                         (track_x, hy, track_w, y_bot - hy), border_radius=3)
     pygame.draw.rect(surf, (r // 2, g // 2, b // 2),
-                     (track_x, y_top, track_w, height), 1, border_radius=4)
+                     (track_x, y_top, track_w, height), 1, border_radius=3)
 
-    cx = track_x + track_w // 2
-    pygame.draw.circle(surf, (r // 5, g // 5, b // 5), (cx, hy), 9)
-    pygame.draw.circle(surf, SL_COLLAPSE_C, (cx, hy), 6)
+    pygame.draw.line(surf, SL_COLLAPSE_C, (cx, hy), (ctx.lx0, hy), 2)
+    pygame.draw.circle(surf, (r // 5, g // 5, b // 5), (cx, hy), knob_r + 2)
+    pygame.draw.circle(surf, SL_COLLAPSE_C, (cx, hy), knob_r)
     pygame.draw.circle(surf, WHITE, (cx, hy), 2)
 
-    lbl = _tcache('cg_lbl', "COLLAPSE", F_XSM, SL_COLLAPSE_C)
-    surf.blit(lbl, (track_x - 2, y_top - 18))
+    if not _GAUGE_LBL:
+        _GAUGE_LBL.append(pygame.transform.rotate(
+            F_XSM.render("COLLAPSE", True, SL_COLLAPSE_C), 90))
+    lbl = _GAUGE_LBL[0]
+    surf.blit(lbl, (cx - lbl.get_width() // 2, y_top - lbl.get_height() - 12))
 
-    return pygame.Rect(track_x - 8, y_top - 8, track_w + 24, height + 16)
+    return pygame.Rect(0, y_top - 8, ctx.lx0, height + 16)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1623,7 +1689,7 @@ def draw_menu():
         screen.blit(hint, (rect.right + 12, rect.centery - hint.get_height() // 2))
 
     # ── Arrow decoration — use pre-baked arrow surfaces ───────────────────────
-    arrow_y = SH // 2 + 110
+    arrow_y = by2 + btn_h + 24
     for i, ar in enumerate(_ARROW_SURFS):
         bounce = int(5 * math.sin(t * 0.12 + i * 0.8))
         ax = SW // 2 - 90 + i * 60
@@ -1875,7 +1941,7 @@ def _draw_results_surface(surf, ps: PlayerState, label: str, hi_name=None):
     if last_song:
         song_lbl = _tcache('res_song',
             f"{last_song['title']}  -  {last_song['artist']}", F_MED, DIM)
-        surf.blit(song_lbl, (SW // 2 - song_lbl.get_width() // 2, 62))
+        surf.blit(song_lbl, (SW // 2 - song_lbl.get_width() // 2, 22 + title.get_height() + 2))
 
     _draw_results_panel(surf, ps, SW // 2, SH // 2 - 30, label)
 
@@ -2184,10 +2250,9 @@ _seen_collapsed_nids: set = set()
 _collapse_drag = [False]
 
 def _collapse_set_from_mouse_y(my: int):
-    y_top = LANE_TOP + 40
-    y_bot = LANE_BOT - 40
-    frac  = 1.0 - max(0.0, min(1.0, (my - y_top) / (y_bot - y_top)))
-    collapse_slider.val = COLLAPSE_MIN_PX + frac * (COLLAPSE_MAX_PX - COLLAPSE_MIN_PX)
+    # The gauge knob sits on the collapse line, so the line follows the mouse.
+    collapse_slider.val = max(COLLAPSE_MIN_PX, min(COLLAPSE_MAX_PX, TARGET_Y - my))
+    _pot_state["owns"] = False   # mouse takes the bar until the knob moves again
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -2202,11 +2267,13 @@ def main():
 
     # Open logo window on second monitor immediately at startup
     _open_logo_window()
+    _pot_start()
 
     _menu_music_ch = None   # channel playing menu music loop
 
     while True:
         dt = min(clk.tick(30 if _LOW_PERF else FPS) / 1000.0, 0.05)
+        _pot_poll()
 
         # ── MENU ──────────────────────────────────────────────────────────────
         if game_state == GameState.MENU:
@@ -2466,7 +2533,7 @@ def main():
 
             elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                 # Start dragging the collapse gauge if clicked in its column.
-                if event.pos[0] < 40:
+                if event.pos[0] < (ctx1.lx0 if ctx1 else LX0):
                     _collapse_drag[0] = True
                     _collapse_set_from_mouse_y(event.pos[1])
             elif event.type == pygame.MOUSEBUTTONUP and event.button == 1:

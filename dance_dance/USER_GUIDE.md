@@ -56,6 +56,7 @@ vs Player 2 (decided by USB plug order at boot).
 | View high scores  | Tab (in song select) | —   |
 | Nudge BIAS slider | `[` and `]`   | —          |
 | Reset BIAS to 50% | `\`           | —          |
+| Move COLLAPSE line | `+` / `-`, drag the left gauge, or turn the **potentiometer** (see `POTENTIOMETER_SETUP.md`) | — |
 
 ---
 

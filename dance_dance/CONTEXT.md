@@ -203,6 +203,20 @@ aplay -D default /usr/share/sounds/alsa/Front_Left.wav   # test HDMI audio
 
 ---
 
+## 9b. COLLAPSE bar + hardware potentiometer
+
+- The collapse line height is the single shared `collapse_slider.val` (px above
+  `TARGET_Y`), range `COLLAPSE_MIN_PX`..`COLLAPSE_MAX_PX`. The max follows the lane
+  height (`TARGET_Y - LANE_TOP - 80`), so the bar covers the full lane on portrait.
+- `draw_collapse_gauge()` draws the knob **at the real line height** (`get_collapse_y()`),
+  inside the left margin (`ctx.lx0`). Mouse drag sets the line directly.
+- Knob: `pot_reader.py` (separate process, started by `_pot_start()` on Linux when
+  `pot_config.json` exists) sends `0.0..1.0` over UDP `127.0.0.1:50555`;
+  `_pot_poll()` reads it every frame. Keys/mouse set `_pot_state["owns"]=False`; the
+  knob takes back control after moving `POT_DEADBAND`. Backends live in
+  `pot_input.py` (RC timing on GPIO18 / ADS1115). Setup: `POTENTIOMETER_SETUP.md`.
+- `dance_optimized_horizontal.py` must stay identical except the header and `SW, SH`.
+
 ## 10. Editing rules of thumb
 
 - **Only edit `quantum_optimized.py`.** Mirror changes to `quantum_dance.py`

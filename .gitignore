@@ -6,3 +6,6 @@ __pycache__/
 
 # Leaderboard data (runtime, per-machine)
 dance_dance/leaderboard.json
+
+# Potentiometer calibration (per-machine, made by pot_reader.py --calibrate)
+dance_dance/pot_config.json
