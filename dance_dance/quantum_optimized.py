@@ -62,8 +62,9 @@ from enum import Enum, auto
 # Force them unconditionally — labwc autostart does not reliably pass
 # shell env vars into child processes on this Pi setup.
 # plug:both_hdmi routes to both HDMI screens via /etc/asound.conf on Pi.
-_os.environ["SDL_AUDIODRIVER"] = "alsa"
-_os.environ["AUDIODEV"]        = "default"
+if sys.platform.startswith("linux"):   # ALSA only exists on Linux (Pi)
+    _os.environ["SDL_AUDIODRIVER"] = "alsa"
+    _os.environ["AUDIODEV"]        = "default"
 
 # pre_init reserves the audio device BEFORE pygame.init() opens it,
 # so both mixer channels and mixer.music share the same single device handle.
