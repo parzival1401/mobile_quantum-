@@ -133,10 +133,12 @@ def main():
     ap.add_argument("--backend",   choices=["rc", "ads1115", "fake"])
     ap.add_argument("--gpio",      type=int, help="BCM pin for rc (default 18)")
     ap.add_argument("--channel",   type=int, help="ADS1115 input 0..3")
+    ap.add_argument("--i2c-bus",   type=int, help="ADS1115 I2C bus (1 = pins 3/5, 6 = pins 15/16)")
     ap.add_argument("--port",      type=int, default=50555, help="game UDP port")
     args = ap.parse_args()
 
-    cfg = load_config({"backend": args.backend, "gpio": args.gpio, "channel": args.channel})
+    cfg = load_config({"backend": args.backend, "gpio": args.gpio, "channel": args.channel,
+                       "i2c_bus": args.i2c_bus})
     try:
         pot = make_pot(cfg)
     except RuntimeError as e:

@@ -57,6 +57,24 @@ Pot outer pins go to 3.3 V and GND. Enable I2C once (`sudo raspi-config` →
 Interface Options → I2C), then set `"backend": "ads1115"` in `pot_config.json`
 or pass `--backend ads1115` when calibrating.
 
+**If pins 1–6 are taken (for example by the fan), use the I2C6 bus instead:**
+
+| ADS1115 | Pi                         |
+|---------|----------------------------|
+| VDD     | 3.3 V (pin 17)             |
+| GND     | GND (pin 14)               |
+| SDA     | GPIO22 / I2C6 SDA (pin 15) |
+| SCL     | GPIO23 / I2C6 SCL (pin 16) |
+| ADDR    | GND (address 0x48)         |
+| A0      | pot wiper                  |
+
+Add `dtoverlay=i2c6` to `/boot/firmware/config.txt`, reboot, and check that
+`i2cdetect -y 6` shows `48`. Test with `python3 test_ads1115.py` (it defaults to
+bus 6), then calibrate with
+`pot_reader.py --backend ads1115 --i2c-bus 6 --calibrate`. Calibration saves the
+bus to `pot_config.json`. I2C6 has no pull-up resistors on the Pi; most ADS1115
+breakout boards include them. If yours doesn't, add 4.7 kΩ from SDA and from SCL to 3.3 V.
+
 ## 3. Install (on the Pi)
 
 ```bash
